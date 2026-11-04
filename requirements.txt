@@ -1,0 +1,8 @@
+# Versions used for the Windows build (verified end-to-end under Wine as well).
+numpy==2.0.2
+opencv-python-headless==5.0.0.93
+pillow==12.3.0
+pillow-heif==1.8.1
+PySide6-Essentials==6.8.3
+shiboken6==6.8.3
+# imageio-ffmpeg (0.8.1) is only used to provide ffmpeg.exe, see packaging/windows

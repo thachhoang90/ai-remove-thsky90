@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Remove - thsky90</title>
+<meta name="description" content="Gỡ logo ngôi sao Gemini khỏi ảnh và video ngay trong trình duyệt. Tệp không rời khỏi máy của bạn.">
+<link rel="icon" href="assets/app_icon.png">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<header class="hdr">
+  <img src="assets/app_icon.png" alt="" class="logo">
+  <div>
+    <h1>AI Remove <span>– thsky90</span></h1>
+    <p>Gỡ logo ngôi sao Gemini khỏi ảnh và video. Xử lý 100% trong trình duyệt, tệp không được tải lên máy chủ.</p>
+  </div>
+  <a class="dl" href="https://github.com/" id="dlLink" target="_blank" rel="noopener">Tải bản Windows</a>
+</header>
+
+<nav class="tabs">
+  <button class="tab active" data-kind="image">Ảnh <b id="cntImage"></b></button>
+  <button class="tab" data-kind="video">Video <b id="cntVideo"></b></button>
+</nav>
+
+<main class="main">
+  <section class="left card">
+    <h2 id="listTitle">Danh sách ảnh</h2>
+    <div class="row">
+      <label class="btn">Chọn tệp…<input type="file" id="pickFiles" multiple hidden></label>
+      <label class="btn">Chọn thư mục…<input type="file" id="pickDir" webkitdirectory multiple hidden></label>
+      <button class="btn" id="clear">Xóa</button>
+    </div>
+    <ul id="list" class="list"></ul>
+    <p class="hint" id="fmtHint">Kéo thả tệp vào trang. Định dạng: PNG, JPG, JPEG, JFIF, WEBP, GIF (khung đầu), BMP.</p>
+    <h2>Nhật ký</h2>
+    <pre id="log" class="log"></pre>
+  </section>
+
+  <section class="right">
+    <div class="card prev">
+      <div class="prevbar">
+        <h2>Xem trước &amp; định vị</h2>
+        <div class="seg">
+          <button id="vBefore" class="on">Ảnh gốc</button><button id="vAfter">Sau khi xử lý</button>
+        </div>
+        <button class="btn sm" id="zoomBox">Phóng vùng logo</button>
+        <button class="btn sm" id="fitView">Vừa khung</button>
+      </div>
+      <div class="stage" id="stage"><canvas id="cv"></canvas><div class="empty" id="empty">Chọn tệp để xem trước</div></div>
+      <div class="vrow" id="vrow" hidden>
+        <span>Khung hình</span><input type="range" id="seek" min="0" max="1000" value="350"><span id="tlabel">0.0 s</span>
+      </div>
+      <p id="detect" class="detect"></p>
+      <div class="ctl">
+        <label><input type="radio" name="mode" value="auto" checked> Tự động dò logo</label>
+        <label><input type="radio" name="mode" value="manual"> Định vị thủ công</label>
+        <label class="sel">Cách xóa
+          <select id="method"><option value="alpha">Khử alpha (chính xác – khuyên dùng)</option><option value="inpaint">Vá vùng (inpaint)</option></select>
+        </label>
+        <button class="btn sm accent" id="preview">Xem kết quả</button>
+      </div>
+      <div class="ctl man">
+        <label>X <input type="number" id="bx" step="0.5"></label>
+        <label>Y <input type="number" id="by" step="0.5"></label>
+        <label>Cỡ <input type="number" id="bs" step="0.5"></label>
+        <button class="btn sm" id="snap">Khớp chính xác trong khung</button>
+        <button class="btn sm" id="applyAll">Áp dụng cho tất cả</button>
+      </div>
+      <p class="hint">Thủ công: kéo khung vào đúng ngôi sao, kéo góc để đổi cỡ, phím mũi tên dịch 1 px (Shift 0,25 px), lăn chuột để phóng to, chuột phải để kéo ảnh.</p>
+    </div>
+  </section>
+</main>
+
+<footer class="bar card">
+  <label class="chk"><input type="checkbox" id="strip" checked> Gỡ metadata ẩn (EXIF, XMP, IPTC, C2PA, thông tin AI)</label>
+  <button class="btn" id="pickOut">Chọn thư mục lưu…</button>
+  <span id="outName" class="hint"></span>
+  <button class="btn primary" id="start">Bắt đầu xử lý ảnh</button>
+  <button class="btn" id="zipAll" disabled>Tải tất cả (.zip)</button>
+  <div class="prog"><div id="progBar"></div><span id="progText">Sẵn sàng</span></div>
+</footer>
+
+<script src="vendor/jszip.min.js"></script>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
