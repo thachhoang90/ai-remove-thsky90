@@ -58,7 +58,7 @@ bash packaging/windows/build_on_linux.sh
 ```
 
 Kết quả nằm trong `dist/`: `AI-Remove-thsky90-<ver>-Setup.exe` và bản portable `.zip`.
-Workflow `.github/workflows/build-windows.yml` làm việc này tự động; đẩy một tag `v1.0.0` để tạo Release.
+Workflow `.github/workflows/build-windows.yml` làm việc này tự động: vào **Releases → Draft a new release**, tạo tag `v1.0.0`, bấm **Publish release**; khoảng 10–15 phút sau file Setup.exe và bản portable được gắn vào Release. Hoặc vào **Actions → Build Windows installer → Run workflow** để lấy bản build dạng artifact.
 Workflow `.github/workflows/pages.yml` triển khai thư mục `web/` lên GitHub Pages
 (bật trong Settings → Pages → Source: GitHub Actions).
 
