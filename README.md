@@ -26,9 +26,9 @@ Giao diện tối, có ở cả bản Windows và bản web:
 |---|---|
 | 1. Tệp và Xuất bản | Đọc/ghi JPG, PNG, WEBP (bản Windows đọc thêm HEIC); chuyển định dạng khi xuất; **nén thông minh** (thu về kích thước nền tảng + tìm mức nén nhỏ nhất có SSIM ≥ 0,985); khung cắt một chạm: Facebook Cover, FB Post 1.91:1, Instagram 1:1, 4:5, Stories/TikTok 9:16, YouTube 16:9 (khung di chuyển, co giãn được); xem trước lưới Instagram 3×3 / bảng tin Facebook |
 | 2. Đóng logo | Logo PNG trong suốt, 9 vị trí, độ đậm 0–100%, kích thước theo % ảnh, lề; lưu/xóa mẫu (preset); đóng logo hàng loạt cả thư mục chạy nền, có nút ngưng |
-| 3. Bộ lọc và Điều chỉnh | 8 bộ lọc (Vintage, Cinematic, Sáng/Tối giản, Đen trắng, Tông ấm, Tông lạnh, Phim bạc màu, Rực rỡ) có cường độ; độ sáng, tương phản, bão hòa (gộp một ma trận màu 3×4), độ sắc nét (unsharp mask) — xem trước tức thì |
-| 4. Làm đẹp và AI | Tối ưu một chạm theo histogram; làm mịn da (Bilateral Filter trên Windows / Guided Filter trên web + tách tần số, tự nhận vùng da); xóa vật thể bằng cọ vẽ + inpainting (cv2.inpaint Telea/Navier–Stokes; bản web dùng Telea viết bằng JavaScript) |
-| 5. Giao diện | Undo/Redo 30 bước (Ctrl+Z / Ctrl+Y) và danh sách lịch sử; nút "Giữ để so sánh" trước/sau; giao diện tối (QSS trên Windows, CSS trên web) |
+| 3. Bộ lọc và Điều chỉnh | 16 bộ lọc (Vintage, Cinematic, Sáng/Tối giản, Đen trắng, Tông ấm, Tông lạnh, Phim bạc màu, Rực rỡ, Chân dung trong trẻo, Giờ vàng, Pastel Hàn Quốc, Moody tối, Phim Kodak, Fuji cổ điển, Sepia cổ điển, Matte lạnh) có cường độ; độ sáng, tương phản, bão hòa (gộp một ma trận màu 3×4), độ sắc nét (unsharp mask) — xem trước tức thì |
+| 4. Làm đẹp và AI | Tối ưu một chạm cho chân dung và ảnh thường (AI YuNet nhận diện khuôn mặt trên bản Windows; cân bằng trắng theo màu da, đánh sáng khuôn mặt, giữ chi tiết vùng sáng/tối không quầng, vibrance, giảm nhiễu màu, xóa mụn, mờ nếp nhăn, sáng da; ảnh đồ họa/hoạt hình chỉ chỉnh nhẹ); làm mịn da (Bilateral Filter trên Windows / Guided Filter trên web + tách tần số, tự nhận vùng da); xóa vật thể bằng cọ vẽ + inpainting (cv2.inpaint Telea/Navier–Stokes; bản web dùng Telea viết bằng JavaScript) |
+| 5. Giao diện | Undo/Redo 30 bước (Ctrl+Z / Ctrl+Y), cột lịch sử thao tác riêng bên phải khung ảnh; nút "Giữ để so sánh" trước/sau; giao diện tối (QSS trên Windows, CSS trên web) |
 
 Mã nguồn có chú thích tiếng Việt chi tiết: `airemove/editor/` (Windows) và `web/js/editor/` (web).
 
@@ -90,6 +90,7 @@ packaging/windows/        launcher .exe, kịch bản NSIS, script build
 
 ## Lịch sử phiên bản
 
+- **2.2.0**: cột lịch sử thao tác riêng bên phải khung ảnh; thêm 8 bộ lọc (tổng 16); viết lại "Tối ưu một chạm" theo hướng làm đẹp chân dung tự nhiên (nhận diện khuôn mặt YuNet, đánh sáng mặt, xóa mụn, mờ nếp nhăn, sáng da, giữ chi tiết trời không quầng) và tự nhận biết ảnh đồ họa/hoạt hình.
 - **2.1.0**: thêm tab "Chỉnh sửa ảnh" (5 module ở trên) cho cả bản Windows và bản web; giữ nguyên toàn bộ tính năng gỡ logo/metadata của bản 1.1.
 - **1.1.0**: sửa lỗi build bộ cài trên GitHub Actions (đường dẫn `dist` tương đối); giao diện mới: tab Ảnh/Video nổi bật, nút to hơn và có màu, thanh trạng thái lớn hơn, cột danh sách rộng hơn; thêm cột tích chọn (chỉ xử lý/tải các mục đã chọn), nút "Tải các mục đã chọn" và "Ngưng tiến trình" (bản web; bản Windows có cột tích chọn và nút "Ngưng tiến trình"); sửa lỗi thanh chọn khung hình video hiện cả ở tab Ảnh trên bản web.
 - **1.0.0**: phát hành đầu tiên.

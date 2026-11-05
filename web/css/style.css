@@ -160,7 +160,12 @@ body.editing .main, body.editing .bar { display: none !important; }
 .eb.compare:active, .eb.compare.held { background: #F59E0B; border-color: #F59E0B; color: #111827; }
 .eb.accent:disabled, .eb.good:disabled, .eb.danger:disabled { background: #1E222B; border-color: var(--e-line); color: #5B6273; }
 .eb.wide { width: 100%; margin: 4px 0; }
-.ed-body { display: grid; grid-template-columns: minmax(330px, 400px) 1fr; gap: 10px; margin-top: 10px; }
+.ed-body { display: grid; grid-template-columns: minmax(330px, 400px) 1fr 250px; gap: 10px; margin-top: 10px; }
+.ed-histcol { background: var(--e-panel); border: 1px solid var(--e-line); border-radius: 10px; padding: 10px;
+  display: flex; flex-direction: column; max-height: calc(100vh - 230px); min-height: 520px; }
+.ed-histcol h4 { color: var(--e-head); font-size: 15px; margin: 2px 0 8px; }
+.ed-histcol .ed-hist { flex: 1; max-height: none; background: #11141A; border: 1px solid var(--e-btn-line); border-radius: 8px;
+  padding: 6px 6px 6px 28px; margin: 6px 0; }
 .ed-panel { background: var(--e-panel); border: 1px solid var(--e-line); border-radius: 10px; padding: 8px;
   max-height: calc(100vh - 230px); min-height: 520px; overflow: auto; }
 .ed-sec { margin-bottom: 6px; }
@@ -205,6 +210,7 @@ body.editing .main, body.editing .bar { display: none !important; }
 #edLogoThumb { background: #2A2F3A; border-radius: 6px; }
 @media (max-width: 900px) {
   .ed-body { grid-template-columns: 1fr; }
+  .ed-histcol { max-height: 320px; min-height: 0; }
   .ed-panel { max-height: none; min-height: 0; }
   .ed-stage { height: 60vh; min-height: 320px; }
 }

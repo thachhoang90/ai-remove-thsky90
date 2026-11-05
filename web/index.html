@@ -147,8 +147,9 @@
       </details>
       <details class="ed-sec" data-sec="retouch">
         <summary>4. Làm đẹp và AI</summary>
-        <button class="eb accent wide" id="edAuto">Tối ưu một chạm (Auto Enhance)</button>
-        <p class="ed-hint">Cân bằng trắng, giãn mức đen/trắng, hiệu chỉnh sáng dựa trên histogram và tăng tương phản cục bộ.</p>
+        <button class="eb accent wide" id="edAuto">Tối ưu một chạm (chân dung và ảnh thường)</button>
+        <div class="ed-slider"><span>Mức độ</span><input type="range" id="edAutoStrength" min="10" max="100" value="70"><b>70%</b></div>
+        <p class="ed-hint">Cân bằng trắng theo vùng trung tính và màu da, chỉnh sáng theo khuôn mặt và đánh sáng vùng mặt, giữ chi tiết trời/vùng tối không bị quầng, tăng màu tự nhiên, giảm nhiễu màu. Với chân dung: xóa mụn nhỏ, làm mờ nếp nhăn, mịn nhẹ và sáng da. (Bản Windows có thêm AI nhận diện khuôn mặt nên chính xác hơn.)</p>
         <h4>Làm mịn da</h4>
         <div class="ed-slider"><span>Mịn da</span><input type="range" id="edSkin" min="0" max="100" value="0"><b>0</b></div>
         <button class="eb wide" id="edSkinApply">Áp dụng làm mịn</button>
@@ -159,18 +160,18 @@
         <div class="ed-row"><button class="eb danger" id="edRemove" disabled>Xóa vùng đã tô</button><button class="eb" id="edClearMask">Xóa nét tô</button></div>
         <p class="ed-hint">Chuột trái: tô vùng cần xóa. Chuột phải: tẩy. Lăn chuột để phóng to, giữ nút giữa để kéo ảnh. Vùng đã tô được lấp bằng thuật toán Telea (như cv2.inpaint).</p>
       </details>
-      <details class="ed-sec" data-sec="history">
-        <summary>5. Lịch sử thao tác</summary>
-        <div class="ed-row"><button class="eb" id="edUndo2">↶ Hoàn tác</button><button class="eb" id="edRedo2">↷ Làm lại</button></div>
-        <ol class="ed-hist" id="edHist"></ol>
-        <p class="ed-hint">Lưu tối đa 30 bước. Bấm vào một dòng để quay lại trạng thái đó. Ctrl+Z hoàn tác, Ctrl+Y làm lại.</p>
-      </details>
     </aside>
     <div class="ed-stage" id="edStage">
       <canvas id="edCanvas"></canvas>
       <canvas id="edSocialCanvas" hidden></canvas>
       <div class="ed-empty" id="edEmpty">Mở ảnh (hoặc kéo thả ảnh vào đây) để bắt đầu chỉnh sửa</div>
     </div>
+    <aside class="ed-histcol">
+      <h4>Lịch sử thao tác</h4>
+      <div class="ed-row"><button class="eb" id="edUndo2">↶ Hoàn tác</button><button class="eb" id="edRedo2">↷ Làm lại</button></div>
+      <ol class="ed-hist" id="edHist"></ol>
+      <p class="ed-hint">Lưu tối đa 30 bước. Bấm vào một dòng để quay lại trạng thái đó. Ctrl+Z hoàn tác, Ctrl+Y làm lại.</p>
+    </aside>
   </div>
   <div class="ed-status" id="edStatus">Mở ảnh để bắt đầu.</div>
 </section>

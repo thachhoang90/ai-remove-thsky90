@@ -348,8 +348,9 @@ async function autoEnhance() {
   if (!cur()) return;
   await commitAdj('Điều chỉnh', true);
   status('Đang tối ưu…'); await tick();
-  const [out, notes] = O.autoEnhance(cur());
-  pushState(out, 'Tối ưu một chạm');
+  const lv = +$('edAutoStrength').value;
+  const [out, notes] = O.autoEnhance(cur(), lv);
+  pushState(out, `Tối ưu một chạm (${lv}%)`);
   status('Tối ưu một chạm: ' + notes);
 }
 
@@ -639,6 +640,7 @@ function init() {
   $('edAdjReset').onclick = () => resetAdj();
   // module 4
   $('edAuto').onclick = autoEnhance;
+  bindSlider('edAutoStrength', () => {}, v => v + '%');
   $('edSkinApply').onclick = () => commitAdj('Làm mịn da');
   $('edBrush').onclick = () => setBrush(V.mode !== 'brush');
   bindSlider('edBrushSize', v => { V.brush = v; V.draw(); }, v => v + ' px');

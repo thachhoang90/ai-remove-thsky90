@@ -215,7 +215,6 @@ class EditorTab(QWidget):
         self.toolbox.addItem(self._scroll(self._page_logo()), "2. Đóng logo")
         self.toolbox.addItem(self._scroll(self._page_adjust()), "3. Bộ lọc và Điều chỉnh")
         self.toolbox.addItem(self._scroll(self._page_retouch()), "4. Làm đẹp và AI")
-        self.toolbox.addItem(self._scroll(self._page_history()), "5. Lịch sử thao tác")
         self.toolbox.setCurrentIndex(2)
         self.toolbox.currentChanged.connect(self._on_page)
         body.addWidget(panel)
@@ -228,6 +227,16 @@ class EditorTab(QWidget):
         self.stack.addWidget(self.canvas)
         self.stack.addWidget(self.social)
         body.addWidget(self.stack, 1)
+
+        # ---- cột lịch sử thao tác bên phải (luôn hiển thị để dễ theo dõi)
+        hist = QFrame()
+        hist.setObjectName("Panel")
+        hist.setFixedWidth(250)
+        hl = QVBoxLayout(hist)
+        hl.setContentsMargins(10, 10, 10, 10)
+        hl.addWidget(_section("Lịch sử thao tác"))
+        hl.addWidget(self._page_history(), 1)
+        body.addWidget(hist)
 
         self.lbl_status = QLabel("Mở ảnh (hoặc kéo thả ảnh vào cửa sổ) để bắt đầu.")
         self.lbl_status.setObjectName("Status")
@@ -501,12 +510,15 @@ class EditorTab(QWidget):
         w = QWidget()
         v = QVBoxLayout(w)
         v.addWidget(_section("Tự động tối ưu"))
-        b = QPushButton("Tối ưu một chạm (Auto Enhance)")
+        b = QPushButton("Tối ưu một chạm (chân dung và ảnh thường)")
         b.setObjectName("Accent")
         b.clicked.connect(self.auto_enhance)
         v.addWidget(b)
-        v.addWidget(_hint("Cân bằng trắng, giãn mức đen/trắng và hiệu chỉnh sáng dựa trên histogram, "
-                          "thêm tương phản cục bộ (CLAHE)."))
+        self.sl_auto = SliderRow("Mức độ", 10, 100, 70, "%")
+        v.addWidget(self.sl_auto)
+        v.addWidget(_hint("Tự nhận diện khuôn mặt (AI YuNet). Cân bằng trắng theo vùng trung tính và màu da, chỉnh sáng "
+                          "theo khuôn mặt và đánh sáng vùng mặt, giữ chi tiết trời/vùng tối không bị quầng, tăng màu tự "
+                          "nhiên, giảm nhiễu màu. Với chân dung: xóa mụn nhỏ, làm mờ nếp nhăn, mịn nhẹ và sáng da."))
         v.addWidget(_section("Làm mịn da"))
         self.sl_skin = SliderRow("Mịn da", 0, 100, 0)
         self.sl_skin.changed.connect(lambda val: self._set_adj(skin=val))
@@ -558,10 +570,12 @@ class EditorTab(QWidget):
         row.addWidget(b)
         v.addLayout(row)
         self.lst_hist = QListWidget()
+        self.lst_hist.setWordWrap(True)
         self.lst_hist.itemClicked.connect(lambda it: self.jump(self.lst_hist.row(it)))
         v.addWidget(self.lst_hist, 1)
         v.addWidget(_hint(f"Lưu tối đa {History.MAX_STEPS} bước. Bấm vào một dòng để quay lại trạng thái đó. "
                           "Phím tắt: Ctrl+Z hoàn tác, Ctrl+Y làm lại."))
+        v.setContentsMargins(0, 0, 0, 0)
         return w
 
     # ============================================================== tiện ích
@@ -609,8 +623,11 @@ class EditorTab(QWidget):
 
     def _refresh_history(self):
         self.lst_hist.clear()
+        from PySide6.QtGui import QColor
         for i, lab in enumerate(self.history.labels()):
             self.lst_hist.addItem(f"{i + 1:>2}. {lab}")
+            if i > self.history.index:          # các bước "tương lai" (sau khi Hoàn tác) hiển thị mờ
+                self.lst_hist.item(i).setForeground(QColor("#5B6273"))
         if self.history.index >= 0:
             self.lst_hist.setCurrentRow(self.history.index)
         self._update_buttons()
@@ -779,8 +796,8 @@ class EditorTab(QWidget):
         self.commit_adjustments("Điều chỉnh", quiet=True)
         self._busy(True)
         try:
-            out, notes = ops.auto_enhance(self.base)
-            self.history.push(out, self.alpha, "Tối ưu một chạm")
+            out, notes = ops.auto_enhance(self.base, self.sl_auto.value())
+            self.history.push(out, self.alpha, f"Tối ưu một chạm ({self.sl_auto.value()}%)")
         finally:
             self._busy(False)
         self.refresh_preview()

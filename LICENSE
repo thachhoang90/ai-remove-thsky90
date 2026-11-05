@@ -29,6 +29,9 @@ airemove/assets/gemini_alpha_48.png, gemini_alpha_96.png, gemini_alpha_96_v2.png
   Copyright (c) 2025 Jad — gemini-watermark-remover
   Licensed under the MIT License (same terms as above).
 
+airemove/assets/face_detection_yunet_2023mar.onnx
+  YuNet face detector, OpenCV Zoo. Copyright (c) 2020 Shiqi Yu. MIT License.
+
 Bundled runtime (Windows build): Python (PSF License), NumPy (BSD), OpenCV
 (Apache-2.0), Pillow (MIT-CMU), pillow-heif (BSD-3 / libheif LGPL),
 PySide6/Qt (LGPLv3), FFmpeg (GPL build from imageio-ffmpeg).

@@ -238,11 +238,76 @@ const FILTER_FNS = {
   },
   // Rực rỡ.
   vivid(P) { applyMatrix(P, adjustmentMatrix(0, 12, 35)); },
+  // Chân dung trong trẻo: sáng hơn, da ấm hồng nhẹ, tương phản thấp, mềm ảo 12%.
+  portrait(P, w, h) {
+    for (const a of P) for (let i = 0; i < a.length; i++) a[i] = Math.pow(Math.min(1, Math.max(0, a[i])), 0.9);
+    for (let i = 0; i < P[0].length; i++) { P[0][i] *= 1.03; P[2][i] *= 0.97; }
+    applyMatrix(P, adjustmentMatrix(3, -12, -4)); clamp01(P);
+    softFocus(P, w, h, 0.12);
+    applyCurves(P, { all: [[0, 12], [128, 136], [255, 252]] });
+  },
+  // Giờ vàng: vùng sáng ngả cam vàng, nâng vùng tối, tối góc nhẹ.
+  golden(P, w, h) {
+    const [r, g, b] = P;
+    for (let i = 0; i < r.length; i++) {
+      const y = LUMA[0] * r[i] + LUMA[1] * g[i] + LUMA[2] * b[i], hi = Math.pow(Math.max(0, y), 1.5), sh = (1 - y) ** 2;
+      r[i] += 0.08 * hi + 0.02 * sh; g[i] += 0.035 * hi; b[i] += -0.06 * hi - 0.02 * sh;
+    }
+    clamp01(P); applyMatrix(P, matrix3(saturationMatrix(1.1))); clamp01(P);
+    applyCurves(P, { all: [[0, 16], [128, 134], [255, 250]] });
+    vignette(P, w, h, 0.22);
+  },
+  // Pastel Hàn Quốc: tương phản thấp, nâng điểm đen, màu dịu, vùng sáng phớt hồng.
+  pastel(P) {
+    applyMatrix(P, adjustmentMatrix(6, -28, -22)); clamp01(P);
+    const [r, g, b] = P;
+    for (let i = 0; i < r.length; i++) { const y = LUMA[0] * r[i] + LUMA[1] * g[i] + LUMA[2] * b[i]; r[i] += 0.035 * y * y; b[i] += 0.03 * y * y; }
+    clamp01(P); applyCurves(P, { all: [[0, 34], [128, 140], [255, 250]] });
+  },
+  // Moody tối: giảm sáng, giảm màu, vùng tối ngả xanh lạnh.
+  moody(P) {
+    applyMatrix(P, adjustmentMatrix(-8, 8, -28)); clamp01(P);
+    const [r, g, b] = P;
+    for (let i = 0; i < r.length; i++) { const y = LUMA[0] * r[i] + LUMA[1] * g[i] + LUMA[2] * b[i], sh = (1 - y) ** 2; r[i] -= 0.03 * sh; g[i] += 0.01 * sh; b[i] += 0.045 * sh; }
+    clamp01(P); applyCurves(P, { all: [[0, 8], [90, 70], [128, 112], [255, 232]] });
+  },
+  // Phim Kodak: ấm, đỏ/vàng đậm đà, điểm đen sâu.
+  kodak(P) {
+    for (let i = 0; i < P[0].length; i++) { P[0][i] *= 1.06; P[1][i] *= 1.02; P[2][i] *= 0.92; }
+    clamp01(P); applyMatrix(P, matrix3(saturationMatrix(1.15))); clamp01(P);
+    applyCurves(P, { all: [[0, 6], [64, 56], [128, 132], [192, 204], [255, 250]], b: [[0, 8], [255, 240]] });
+  },
+  // Fuji cổ điển: màu trầm, xanh lá ngả lam, vùng tối hơi lạnh.
+  fuji(P) {
+    applyMatrix(P, matrix3([0.98, 0.04, -0.02, 0.0, 0.94, 0.06, -0.02, 0.06, 0.96])); clamp01(P);
+    applyMatrix(P, matrix3(saturationMatrix(0.85))); clamp01(P);
+    applyCurves(P, { all: [[0, 10], [64, 58], [128, 130], [192, 200], [255, 248]], b: [[0, 14], [255, 250]] });
+  },
+  // Sepia cổ điển.
+  sepia(P, w, h) {
+    applyMatrix(P, matrix3([0.393, 0.769, 0.189, 0.349, 0.686, 0.168, 0.272, 0.534, 0.131])); clamp01(P);
+    applyCurves(P, { all: [[0, 18], [255, 240]] });
+    vignette(P, w, h, 0.3);
+  },
+  // Matte lạnh (Bắc Âu).
+  matte(P) {
+    for (let i = 0; i < P[0].length; i++) { P[0][i] *= 0.95; P[2][i] *= 1.05; }
+    clamp01(P); applyMatrix(P, adjustmentMatrix(0, -15, -12)); clamp01(P);
+    applyCurves(P, { all: [[0, 38], [128, 132], [255, 240]] });
+  },
 };
+
+/** Làm mềm ảo: trộn với bản mờ Gauss (dùng cho bộ lọc chân dung). */
+function softFocus(P, w, h, amount) {
+  const s = Math.max(1, Math.min(w, h) / 250);
+  for (let c = 0; c < 3; c++) { const b = gaussBlur(P[c], w, h, s); for (let i = 0; i < b.length; i++) P[c][i] = P[c][i] * (1 - amount) + b[i] * amount; }
+}
 
 export const FILTERS = [
   ['none', 'Gốc'], ['vintage', 'Vintage'], ['cinematic', 'Cinematic'], ['bright', 'Sáng / Tối giản'],
   ['bw', 'Đen trắng'], ['warm', 'Tông ấm'], ['cool', 'Tông lạnh'], ['film', 'Phim bạc màu'], ['vivid', 'Rực rỡ'],
+  ['portrait', 'Chân dung trong trẻo'], ['golden', 'Giờ vàng'], ['pastel', 'Pastel Hàn Quốc'], ['moody', 'Moody tối'],
+  ['kodak', 'Phim Kodak'], ['fuji', 'Fuji cổ điển'], ['sepia', 'Sepia cổ điển'], ['matte', 'Matte lạnh'],
 ];
 
 export function applyFilter(img, name, amount = 100) {
@@ -274,48 +339,214 @@ export function renderAdjustments(img, a, scale = 1) {
 // MODULE 4 — LÀM ĐẸP VÀ XỬ LÝ TỰ ĐỘNG
 // =============================================================================
 
-/** Tối ưu một chạm dựa trên histogram: cân bằng trắng (gray-world trên vùng trung tính),
- *  giãn mức đen/trắng theo phân vị 0.5%/99.5%, hiệu chỉnh gamma về xám giữa, tăng
- *  tương phản cục bộ (unsharp bán kính lớn — thay cho CLAHE của bản Windows). */
-export function autoEnhance(img) {
-  const w = img.width, h = img.height, n = w * h, P = toPlanes(img), notes = [];
-  const [r, g, b] = P;
-  // 1. cân bằng trắng
-  let sr = 0, sg = 0, sb = 0, cnt = 0;
-  for (let i = 0; i < n; i++) { const y = LUMA[0] * r[i] + LUMA[1] * g[i] + LUMA[2] * b[i]; if (y > 0.12 && y < 0.92) { sr += r[i]; sg += g[i]; sb += b[i]; cnt++; } }
-  if (cnt > 500) {
-    const m = [sr / cnt, sg / cnt, sb / cnt], gray = (m[0] + m[1] + m[2]) / 3;
-    const gains = m.map(v => 1 + 0.7 * (Math.min(1.25, Math.max(0.8, gray / Math.max(v, 1e-4))) - 1));
-    for (let i = 0; i < n; i++) { r[i] *= gains[0]; g[i] *= gains[1]; b[i] *= gains[2]; }
-    notes.push(`cân bằng trắng R×${gains[0].toFixed(2)} G×${gains[1].toFixed(2)} B×${gains[2].toFixed(2)}`);
+// ---- chuyển đổi sRGB <-> CIE Lab (D65) — Lab tách độ sáng (L) khỏi màu (a, b),
+//      giúp chỉnh sáng/màu da độc lập và tự nhiên hơn so với chỉnh trực tiếp R, G, B.
+const SRGB2LIN = (() => { const t = new Float32Array(256); for (let i = 0; i < 256; i++) { const c = i / 255; t[i] = c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); } return t; })();
+const LIN2SRGB = (() => { const t = new Float32Array(4097); for (let i = 0; i <= 4096; i++) { const c = i / 4096; t[i] = c <= 0.0031308 ? 12.92 * c : 1.055 * Math.pow(c, 1 / 2.4) - 0.055; } return t; })();
+const labF = t => (t > 0.008856 ? Math.cbrt(t) : 7.787 * t + 16 / 116);
+const labFi = t => (t > 0.206893 ? t * t * t : (t - 16 / 116) / 7.787);
+
+function toLab(img) {
+  const n = img.width * img.height, d = img.data, L = new Float32Array(n), A = new Float32Array(n), B = new Float32Array(n);
+  for (let i = 0, p = 0; i < n; i++, p += 4) {
+    const r = SRGB2LIN[d[p]], g = SRGB2LIN[d[p + 1]], b = SRGB2LIN[d[p + 2]];
+    const fx = labF((0.4124564 * r + 0.3575761 * g + 0.1804375 * b) / 0.95047);
+    const fy = labF(0.2126729 * r + 0.7151522 * g + 0.0721750 * b);
+    const fz = labF((0.0193339 * r + 0.1191920 * g + 0.9503041 * b) / 1.08883);
+    L[i] = 116 * fy - 16; A[i] = 500 * (fx - fy); B[i] = 200 * (fy - fz);
   }
-  // 2. giãn mức theo histogram độ sáng
-  const hist = new Uint32Array(1024);
-  for (let i = 0; i < n; i++) { const y = Math.min(1, Math.max(0, LUMA[0] * r[i] + LUMA[1] * g[i] + LUMA[2] * b[i])); hist[Math.min(1023, (y * 1023) | 0)]++; }
-  const pct = q => { let acc = 0; const t = q * n; for (let k = 0; k < 1024; k++) { acc += hist[k]; if (acc >= t) return k / 1023; } return 1; };
-  const lo = Math.min(pct(0.005), 0.10), hi = Math.max(pct(0.995), 0.80);
-  if (hi - lo > 0.05) {
-    for (const a of P) for (let i = 0; i < n; i++) a[i] = (a[i] - lo) / (hi - lo);
-    notes.push(`giãn mức ${Math.round(lo * 255)}→0, ${Math.round(hi * 255)}→255`);
+  return [L, A, B];
+}
+
+function fromLab([L, A, B], like) {
+  const out = newImage(like.width, like.height), d = out.data, s = like.data, n = L.length;
+  const enc = v => LIN2SRGB[Math.max(0, Math.min(4096, Math.round(v * 4096)))] * 255 + 0.5;
+  for (let i = 0, p = 0; i < n; i++, p += 4) {
+    const fy = (L[i] + 16) / 116, fx = fy + A[i] / 500, fz = fy - B[i] / 200;
+    const X = labFi(fx) * 0.95047, Y = labFi(fy), Z = labFi(fz) * 1.08883;
+    d[p] = enc(3.2404542 * X - 1.5371385 * Y - 0.4985314 * Z);
+    d[p + 1] = enc(-0.9692660 * X + 1.8760108 * Y + 0.0415560 * Z);
+    d[p + 2] = enc(0.0556434 * X - 0.2040259 * Y + 1.0572252 * Z);
+    d[p + 3] = s[p + 3];
   }
-  clamp01(P);
-  // 3. gamma
-  let mean = 0;
-  for (let i = 0; i < n; i++) mean += LUMA[0] * r[i] + LUMA[1] * g[i] + LUMA[2] * b[i];
-  mean /= n;
-  if (mean > 0.05 && mean < 0.95) {
-    let gm = Math.log(0.48) / Math.log(mean);
-    gm = 1 + 0.6 * (Math.min(1.35, Math.max(0.75, gm)) - 1);
-    if (Math.abs(gm - 1) > 0.02) { for (const a of P) for (let i = 0; i < n; i++) a[i] = Math.pow(a[i], gm); notes.push(`gamma ${gm.toFixed(2)}`); }
+  return out;
+}
+
+/** Tìm các mảng da đủ lớn (thay cho nhận diện khuôn mặt bằng AI của bản Windows):
+ *  trả về mặt nạ "vùng mặt/cổ" và bề rộng ước lượng của khuôn mặt (px). */
+function skinRegions(skin, w, h) {
+  const k = Math.min(1, 360 / Math.max(w, h)), sw = Math.max(1, Math.round(w * k)), sh = Math.max(1, Math.round(h * k));
+  const small = new Uint8Array(sw * sh);
+  for (let y = 0; y < sh; y++) for (let x = 0; x < sw; x++) small[y * sw + x] = skin[Math.min(h - 1, Math.floor((y + 0.5) / k)) * w + Math.min(w - 1, Math.floor((x + 0.5) / k))] > 0.5 ? 1 : 0;
+  const lab = new Int32Array(sw * sh), comps = [];
+  let id = 0;
+  for (let i = 0; i < sw * sh; i++) {
+    if (!small[i] || lab[i]) continue;
+    id++; let area = 0, minx = sw, maxx = 0, miny = sh, maxy = 0; const st = [i]; lab[i] = id;
+    while (st.length) {
+      const q = st.pop(), x = q % sw, y = (q / sw) | 0; area++;
+      if (x < minx) minx = x; if (x > maxx) maxx = x; if (y < miny) miny = y; if (y > maxy) maxy = y;
+      for (const nq of [q - 1, q + 1, q - sw, q + sw]) if (nq >= 0 && nq < sw * sh && Math.abs((nq % sw) - x) <= 1 && small[nq] && !lab[nq]) { lab[nq] = id; st.push(nq); }
+    }
+    comps.push({ id, area, bw: maxx - minx + 1, bh: maxy - miny + 1 });
   }
-  // 4. tương phản cục bộ + bão hòa nhẹ
-  const y = new Float32Array(n);
-  for (let i = 0; i < n; i++) y[i] = LUMA[0] * r[i] + LUMA[1] * g[i] + LUMA[2] * b[i];
-  const [ys, k] = smallPlane(y, w, h, 600);
-  const blur = upPlane(gaussBlur(ys.p, ys.w, ys.h, Math.max(2, Math.min(ys.w, ys.h) / 60)), ys.w, ys.h, w, h);
-  for (let i = 0; i < n; i++) { const d = (y[i] - blur[i]) * 0.25; r[i] += d; g[i] += d; b[i] += d; }
-  notes.push('tương phản cục bộ');
-  applyMatrix(P, adjustmentMatrix(0, 0, 8));
+  const tot = sw * sh;
+  const good = comps.filter(c => c.area > 0.003 * tot && c.area < 0.3 * tot && c.bw < sw * 0.8).sort((a, b) => b.area - a.area).slice(0, 3);
+  if (!good.length) return [null, 0];
+  const ids = new Set(good.map(c => c.id)), sel = new Uint8Array(w * h);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const q = Math.min(sh - 1, Math.floor(y * k)) * sw + Math.min(sw - 1, Math.floor(x * k));
+    if (ids.has(lab[q]) && skin[y * w + x] > 0.5) sel[y * w + x] = 1;
+  }
+  return [sel, Math.round(Math.min(good[0].bw, good[0].bh) / k)];
+}
+
+function median(arr, idx) {
+  const v = new Float32Array(idx.length); for (let i = 0; i < idx.length; i++) v[i] = arr[idx[i]];
+  v.sort(); return v.length ? v[v.length >> 1] : 0;
+}
+
+/** Xóa mụn / đốm thâm nhỏ: điểm TỐI hoặc ĐỎ hơn hẳn vùng da xung quanh, kích thước nhỏ
+ *  (loại mắt, lông mày, lỗ mũi) -> lấp bằng Telea rồi trộn mềm. */
+function removeBlemishes(img, skin, faceW) {
+  const w = img.width, h = img.height, n = w * h, k = Math.max(5, Math.min(31, Math.round(faceW / 18))) | 1, r = k >> 1;
+  const [L, A] = toLab(img), mL = boxMean(L, w, h, r), mA = boxMean(A, w, h, r);
+  const cand = new Uint8Array(n);
+  for (let i = 0; i < n; i++) if (skin[i] > 0.6 && (mL[i] - L[i] > 3.5 || (A[i] - mA[i] > 6 && mL[i] - L[i] > 1))) cand[i] = 1;
+  const seen = new Uint8Array(n), keep = new Uint8Array(n), maxArea = (k * 0.9) ** 2;
+  let count = 0;
+  for (let i = 0; i < n; i++) {
+    if (!cand[i] || seen[i]) continue;
+    const st = [i], pix = []; seen[i] = 1; let minx = w, maxx = 0, miny = h, maxy = 0;
+    while (st.length) {
+      const q = st.pop(), x = q % w, y = (q / w) | 0; pix.push(q);
+      if (x < minx) minx = x; if (x > maxx) maxx = x; if (y < miny) miny = y; if (y > maxy) maxy = y;
+      if (pix.length > maxArea * 2) continue;
+      for (const nq of [q - 1, q + 1, q - w, q + w]) if (nq >= 0 && nq < n && Math.abs((nq % w) - x) <= 1 && cand[nq] && !seen[nq]) { seen[nq] = 1; st.push(nq); }
+    }
+    const bw = maxx - minx + 1, bh = maxy - miny + 1;
+    if (pix.length >= 3 && pix.length <= maxArea && Math.max(bw, bh) <= k * 1.3 && pix.length >= 0.3 * bw * bh) { for (const q of pix) keep[q] = 1; count++; }
+  }
+  if (!count || count > 80) return [img, 0];     // quá nhiều "đốm" => kết cấu/hoa văn, không phải mụn
+  const grown = new Uint8Array(n);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (keep[y * w + x]) for (let j = -2; j <= 2; j++) for (let i = -2; i <= 2; i++) { const xx = x + i, yy = y + j; if (xx >= 0 && yy >= 0 && xx < w && yy < h) grown[yy * w + xx] = 1; }
+  const fixed = inpaintTelea(img, grown, 3), wgt = gaussBlur(Float32Array.from(grown), w, h, 1.5), out = cloneImage(img);
+  for (let i = 0, p = 0; i < n; i++, p += 4) { const t = wgt[i]; if (t > 0) for (let c = 0; c < 3; c++) out.data[p + c] = img.data[p + c] * (1 - t) + fixed.data[p + c] * t; }
+  return [out, count];
+}
+
+/** Ảnh đồ họa / hoạt hình? — > 30% điểm ảnh bão hòa cao và nhiều cạnh sắc. Ảnh loại này
+ *  không chạy bước làm đẹp da (dễ xóa nhầm chi tiết vẽ). */
+export function isGraphic(img) {
+  const [sm] = resizeLongSide(img, 600), w = sm.width, h = sm.height, n = w * h, d = sm.data, g = new Float32Array(n);
+  let sat = 0;
+  for (let i = 0, p = 0; i < n; i++, p += 4) {
+    const r = d[p], gg = d[p + 1], b = d[p + 2], mx = Math.max(r, gg, b), mn = Math.min(r, gg, b);
+    if (mx > 0 && (mx - mn) / mx * 255 > 150) sat++;
+    g[i] = 0.299 * r + 0.587 * gg + 0.114 * b;
+  }
+  const g2 = g.map(v => v * v), m = boxMean(g, w, h, 2), m2 = boxMean(g2, w, h, 2);
+  let edges = 0;
+  for (let i = 0; i < n; i++) if (Math.sqrt(Math.max(0, m2[i] - m[i] * m[i])) > 12) edges++;
+  return sat / n > 0.30 && edges / n > 0.22;
+}
+
+/** TỐI ƯU MỘT CHẠM — làm đẹp tự nhiên như ảnh máy ảnh chuyên nghiệp (tương đương bản Windows).
+ *  1. Giảm nhiễu màu. 2. Cân bằng trắng theo vùng trung tính + màu da. 3. Chỉnh sáng theo vùng
+ *  da/mặt + "đánh đèn" vùng mặt. 4. Giữ chi tiết vùng sáng/tối bằng Guided Filter (không quầng).
+ *  5. Vibrance bảo vệ màu da. 6. Chân dung: xóa mụn, mờ nếp nhăn, mịn nhẹ, sáng da. 7. Làm nét
+ *  chi tiết (trừ vùng da). Bản web không có AI nhận diện khuôn mặt nên dùng các mảng màu da lớn. */
+export function autoEnhance(img, strength = 70) {
+  const s = Math.max(0, Math.min(1, strength / 100));
+  if (s <= 0) return [img, 'không thay đổi'];
+  const w = img.width, h = img.height, n = w * h, notes = [];
+  // 1. giảm nhiễu màu: làm mịn kênh màu Cb/Cr, giữ nguyên độ sáng
+  let work = cloneImage(img);
+  {
+    const d = work.data, Y = new Float32Array(n), Cb = new Float32Array(n), Cr = new Float32Array(n);
+    for (let i = 0, p = 0; i < n; i++, p += 4) { const r = d[p], g = d[p + 1], b = d[p + 2]; Y[i] = 0.299 * r + 0.587 * g + 0.114 * b; Cb[i] = -0.168736 * r - 0.331264 * g + 0.5 * b; Cr[i] = 0.5 * r - 0.418688 * g - 0.081312 * b; }
+    const sg = Math.max(1, Math.min(w, h) / 700), bCb = gaussBlur(Cb, w, h, sg), bCr = gaussBlur(Cr, w, h, sg), t = 0.2 + 0.5 * s;
+    for (let i = 0, p = 0; i < n; i++, p += 4) {
+      const cb = Cb[i] * (1 - t) + bCb[i] * t, cr = Cr[i] * (1 - t) + bCr[i] * t;
+      d[p] = Y[i] + 1.402 * cr; d[p + 1] = Y[i] - 0.344136 * cb - 0.714136 * cr; d[p + 2] = Y[i] + 1.772 * cb;
+    }
+  }
+  const graphic = isGraphic(img);
+  const skin = skinMask(work), [faceSel, faceW] = graphic ? [null, 0] : skinRegions(skin, w, h);
+  const portrait = !!faceSel;
+  notes.push(graphic ? 'ảnh đồ họa/hoạt hình – chỉ tối ưu nhẹ ánh sáng và màu' : portrait ? 'phát hiện vùng da/khuôn mặt' : 'ảnh không có vùng da lớn – tối ưu ánh sáng/màu');
+  let [L, A, B] = toLab(work);
+  // 2. cân bằng trắng
+  const neutral = [];
+  for (let i = 0; i < n; i += 3) if (Math.hypot(A[i], B[i]) < 14 && L[i] > 20 && L[i] < 92) neutral.push(i);
+  let da = 0, db = 0;
+  if (neutral.length > 0.02 * n / 3 && !graphic) { da = -median(A, neutral); db = -median(B, neutral); }
+  let faceIdx = null;
+  if (portrait) {
+    faceIdx = []; for (let i = 0; i < n; i += 2) if (faceSel[i]) faceIdx.push(i);
+    if (faceIdx.length > 50) {
+      const fa = median(A, faceIdx), fb = median(B, faceIdx), hue = Math.atan2(fb, fa) * 180 / Math.PI, target = Math.min(Math.max(hue, 45), 62);
+      if (Math.abs(target - hue) > 1) {
+        const c = Math.hypot(fa, fb), ta = c * Math.cos(target * Math.PI / 180), tb = c * Math.sin(target * Math.PI / 180);
+        da = 0.5 * da + 0.5 * (ta - fa); db = 0.5 * db + 0.5 * (tb - fb);
+      }
+    } else faceIdx = null;
+  }
+  da = Math.max(-7, Math.min(7, da)) * (0.5 + 0.4 * s); db = Math.max(-7, Math.min(7, db)) * (0.5 + 0.4 * s);
+  if (Math.abs(da) > 0.3 || Math.abs(db) > 0.3) { for (let i = 0; i < n; i++) { A[i] += da; B[i] += db; } notes.push(`cân bằng trắng (a ${da >= 0 ? '+' : ''}${da.toFixed(1)}, b ${db >= 0 ? '+' : ''}${db.toFixed(1)})`); }
+  // 3. độ sáng: chân dung lấy vùng da làm chuẩn, chỉ nâng toàn ảnh một phần + đánh sáng riêng vùng mặt
+  let ref, target;
+  if (faceIdx) { ref = median(L, faceIdx); target = 64; }
+  else { const all = []; for (let i = 0; i < n; i += 7) all.push(i); ref = median(L, all); target = graphic ? ref : ref < 50 ? 50 : ref; }
+  ref = Math.min(Math.max(ref, 5), 95);
+  let g = Math.log(target / 100) / Math.log(ref / 100); g = Math.min(1.12, Math.max(0.78, g));
+  const gAll = 1 + (g - 1) * ((faceIdx ? 0.45 : 0.6) + 0.4 * s);
+  if (Math.abs(gAll - 1) > 0.015) { for (let i = 0; i < n; i++) L[i] = 100 * Math.pow(Math.min(1, Math.max(0, L[i] / 100)), gAll); notes.push(`chỉnh sáng (gamma ${gAll.toFixed(2)})`); }
+  if (faceIdx) {
+    const gap = Math.min(Math.max(target - median(L, faceIdx), 0), 12) * (0.5 + 0.4 * s);
+    if (gap > 0.5) {
+      const sel = new Float32Array(n); for (let i = 0; i < n; i++) sel[i] = skin[i] > 0.35 ? 1 : 0;
+      const light = gaussBlur(sel, w, h, Math.max(3, faceW / 6)); let mx = 0; for (const v of light) mx = Math.max(mx, v);
+      for (let i = 0; i < n; i++) L[i] += gap * (light[i] / Math.max(mx, 1e-6)) * (1 - L[i] / 115);
+      notes.push(`đánh sáng khuôn mặt +${gap.toFixed(1)}`);
+    }
+  }
+  // 4. giữ chi tiết vùng sáng/tối (Guided Filter tách lớp nền)
+  const Ln = new Float32Array(n); for (let i = 0; i < n; i++) Ln[i] = L[i] / 100;
+  const base = guidedFilter(Ln, w, h, Math.max(8, Math.round(Math.min(w, h) / 25)), 0.02);
+  for (let i = 0; i < n; i++) {
+    let b = base[i]; const det = Ln[i] - b, hi = Math.min(1, Math.max(0, (b - 0.72) / 0.28)), lo = Math.min(1, Math.max(0, (0.28 - b) / 0.28));
+    b = b - 0.10 * s * hi * (b - 0.72) * 2.2 + 0.08 * s * lo * (0.28 - b) * 2.5;
+    let v = Math.min(1, Math.max(0, b + det * (1 + 0.06 * s)));
+    v = v + 0.06 * s * Math.sin(2 * Math.PI * (v - 0.5)) / (2 * Math.PI) * 4 * v * (1 - v);
+    L[i] = Math.min(1, Math.max(0, v)) * 100;
+  }
+  notes.push('giữ chi tiết vùng sáng/tối');
+  // 5. vibrance, bảo vệ màu da
+  for (let i = 0; i < n; i++) {
+    const c = Math.hypot(A[i], B[i]); let bo = 1 + 0.22 * s * Math.min(1, Math.max(0, 1 - c / 55));
+    if (portrait) bo = 1 + (bo - 1) * (1 - 0.75 * skin[i]);
+    A[i] *= bo; B[i] *= bo;
+  }
+  let out = fromLab([L, A, B], img);
+  // 6. làm đẹp chân dung
+  if (portrait) {
+    if (faceW >= 110) { const [o, nb] = removeBlemishes(out, skin, faceW); out = o; if (nb) notes.push(`xóa ${nb} đốm mụn/thâm`); }
+    out = smoothSkin(out, 22 + 30 * s, skin);
+    [L, A, B] = toLab(out);
+    for (let i = 0; i < n; i++) { const m = skin[i]; if (m <= 0) continue; L[i] = Math.min(100, L[i] + (3 + 3 * s) * m * (1 - L[i] / 100) * 1.4); A[i] *= 1 - 0.10 * s * m; }
+    out = fromLab([L, A, B], img);
+    notes.push('làm mịn nhẹ, mờ nếp nhăn, sáng da');
+  }
+  // 7. làm nét chi tiết, trừ vùng da
+  const P = toPlanes(out), y = new Float32Array(n);
+  for (let i = 0; i < n; i++) y[i] = LUMA[0] * P[0][i] + LUMA[1] * P[1][i] + LUMA[2] * P[2][i];
+  const bl = gaussBlur(y, w, h, Math.max(0.8, Math.min(w, h) / 1600));
+  for (let i = 0; i < n; i++) {
+    let d = y[i] - bl[i]; d = Math.sign(d) * Math.max(Math.abs(d) - 0.006, 0) * 0.45 * s * (portrait ? 1 - 0.9 * skin[i] : 1);
+    P[0][i] += d; P[1][i] += d; P[2][i] += d;
+  }
+  notes.push('làm nét chi tiết');
   return [fromPlanes(clamp01(P), img), notes.join(', ')];
 }
 
@@ -375,10 +606,10 @@ function guidedFilter(I, w, h, r, eps) {
 
 /** Làm mịn da: tách tần số — nền mịn (Guided Filter) + 30% chi tiết nhỏ (lỗ chân lông),
  *  chỉ áp lên vùng da, trộn theo cường độ 0..100 -> mịn mà không bệt. */
-export function smoothSkin(img, strength) {
+export function smoothSkin(img, strength, maskIn = null) {
   if (strength <= 0) return img;
   const w = img.width, h = img.height, n = w * h, s = strength / 100;
-  const mask = skinMask(img), P = toPlanes(img);
+  const mask = maskIn || skinMask(img), P = toPlanes(img);
   const r = Math.max(3, Math.round(Math.min(w, h) / 110)), eps = (0.03 + 0.07 * s) ** 2;
   for (let c = 0; c < 3; c++) {
     const I = P[c], base = guidedFilter(I, w, h, r, eps), fine = gaussBlur(I, w, h, 1.2);

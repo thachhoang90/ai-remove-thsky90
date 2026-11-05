@@ -218,6 +218,81 @@ def _f_vivid(img):
     return to_uint8(apply_matrix(to_float(img), adjustment_matrix(0, 12, 35)))
 
 
+def _soft_focus(f, amount, sigma_frac=1 / 250.0):
+    """Làm mềm ảo (soft focus): trộn với bản mờ Gauss — tạo cảm giác "mơ" cho chân dung."""
+    s = max(1.0, min(f.shape[:2]) * sigma_frac)
+    return f * (1 - amount) + cv2.GaussianBlur(f, (0, 0), s) * amount
+
+
+def _f_portrait(img):
+    # Chân dung trong trẻo: sáng hơn, da ấm hồng nhẹ, tương phản thấp, mềm ảo 12%.
+    f = np.power(np.clip(to_float(img), 0, 1), 0.9)
+    f = f * np.array([1.03, 1.0, 0.97], np.float32)
+    f = apply_matrix(f, adjustment_matrix(3, -12, -4))
+    f = _soft_focus(np.clip(f, 0, 1), 0.12)
+    return _apply_curves(to_uint8(f), all_=[(0, 12), (128, 136), (255, 252)])
+
+
+def _f_golden(img):
+    # Giờ vàng: vùng sáng ngả cam vàng, nâng vùng tối, tối góc nhẹ.
+    f = to_float(img)
+    y = luma(f)[..., None]
+    f = f + (y ** 1.5) * np.array([0.08, 0.035, -0.06], np.float32) + ((1 - y) ** 2) * np.array([0.02, 0.0, -0.02], np.float32)
+    f = cv2.transform(np.clip(f, 0, 1), saturation_matrix(1.1))
+    out = _apply_curves(to_uint8(f), all_=[(0, 16), (128, 134), (255, 250)])
+    return to_uint8(to_float(out) * _vignette(*img.shape[:2], 0.22)[..., None])
+
+
+def _f_pastel(img):
+    # Pastel Hàn Quốc: tương phản thấp, nâng điểm đen, màu dịu, vùng sáng phớt hồng.
+    f = apply_matrix(to_float(img), adjustment_matrix(6, -28, -22))
+    y = luma(np.clip(f, 0, 1))[..., None]
+    f = f + (y ** 2) * np.array([0.035, 0.0, 0.03], np.float32)
+    return _apply_curves(to_uint8(f), all_=[(0, 34), (128, 140), (255, 250)])
+
+
+def _f_moody(img):
+    # Moody tối: giảm sáng, giảm màu, vùng tối ngả xanh lạnh, nén vùng sáng.
+    f = apply_matrix(to_float(img), adjustment_matrix(-8, 8, -28))
+    y = luma(np.clip(f, 0, 1))[..., None]
+    f = f + ((1 - y) ** 2) * np.array([-0.03, 0.01, 0.045], np.float32)
+    return _apply_curves(to_uint8(f), all_=[(0, 8), (90, 70), (128, 112), (255, 232)])
+
+
+def _f_kodak(img):
+    # Phim Kodak: ấm, đỏ/vàng đậm đà, điểm đen sâu, tương phản chữ S.
+    f = to_float(img) * np.array([1.06, 1.02, 0.92], np.float32)
+    f = cv2.transform(np.clip(f, 0, 1), saturation_matrix(1.15))
+    return _apply_curves(to_uint8(f), all_=[(0, 6), (64, 56), (128, 132), (192, 204), (255, 250)],
+                         b=[(0, 8), (255, 240)])
+
+
+def _f_fuji(img):
+    # Fuji cổ điển: màu trầm, xanh lá ngả lam, vùng tối hơi lạnh, tương phản vừa.
+    f = to_float(img)
+    M = np.array([[0.98, 0.04, -0.02], [0.0, 0.94, 0.06], [-0.02, 0.06, 0.96]], np.float32)
+    f = cv2.transform(f, M)
+    f = cv2.transform(np.clip(f, 0, 1), saturation_matrix(0.85))
+    return _apply_curves(to_uint8(f), all_=[(0, 10), (64, 58), (128, 130), (192, 200), (255, 248)],
+                         b=[(0, 14), (255, 250)])
+
+
+def _f_sepia(img):
+    # Sepia cổ điển: ảnh nâu đỏ hoài cổ + tối góc.
+    f = to_float(img)
+    sepia = np.array([[0.393, 0.769, 0.189], [0.349, 0.686, 0.168], [0.272, 0.534, 0.131]], np.float32)
+    f = cv2.transform(f, sepia)
+    out = _apply_curves(to_uint8(f), all_=[(0, 18), (255, 240)])
+    return to_uint8(to_float(out) * _vignette(*img.shape[:2], 0.3)[..., None])
+
+
+def _f_matte(img):
+    # Matte lạnh (Bắc Âu): ngả lạnh, điểm đen nâng cao, tương phản thấp, màu nhạt.
+    f = to_float(img) * np.array([0.95, 1.0, 1.05], np.float32)
+    f = apply_matrix(np.clip(f, 0, 1), adjustment_matrix(0, -15, -12))
+    return _apply_curves(to_uint8(f), all_=[(0, 38), (128, 132), (255, 240)])
+
+
 # Danh sách bộ lọc: (khóa, tên hiển thị, hàm). "none" = ảnh gốc.
 FILTERS = [
     ("none", "Gốc", None),
@@ -229,6 +304,14 @@ FILTERS = [
     ("cool", "Tông lạnh", _f_cool),
     ("film", "Phim bạc màu", _f_film),
     ("vivid", "Rực rỡ", _f_vivid),
+    ("portrait", "Chân dung trong trẻo", _f_portrait),
+    ("golden", "Giờ vàng", _f_golden),
+    ("pastel", "Pastel Hàn Quốc", _f_pastel),
+    ("moody", "Moody tối", _f_moody),
+    ("kodak", "Phim Kodak", _f_kodak),
+    ("fuji", "Fuji cổ điển", _f_fuji),
+    ("sepia", "Sepia cổ điển", _f_sepia),
+    ("matte", "Matte lạnh", _f_matte),
 ]
 _FILTER_FN = {k: fn for k, _, fn in FILTERS}
 
@@ -285,75 +368,306 @@ def render_adjustments(img: np.ndarray, adj: Adjustments, scale: float = 1.0,
 # MODULE 4 — LÀM ĐẸP VÀ XỬ LÝ TỰ ĐỘNG
 # ============================================================================
 
-def auto_enhance(img: np.ndarray) -> tuple[np.ndarray, str]:
-    """Tối ưu một chạm dựa trên biểu đồ histogram.
+def guided_filter(I: np.ndarray, p: np.ndarray, r: int, eps: float) -> np.ndarray:
+    """Guided Filter (He và cộng sự, 2010) — làm mịn GIỮ CẠNH, chi phí O(N).
 
-    1. Cân bằng trắng "thế giới xám" (gray-world) chỉ trên các điểm trung tính
-       vừa phải (bỏ vùng quá tối/quá sáng), giới hạn hệ số để không đổi màu quá đà.
-    2. Kéo giãn mức (auto levels): lấy phân vị 0.5% và 99.5% của độ sáng làm
-       điểm đen/trắng mới — áp cùng một hệ số cho cả 3 kênh để không lệch màu.
-    3. Hiệu chỉnh gamma để độ sáng trung bình tiến về mức xám giữa.
-    4. CLAHE nhẹ trên kênh L (không gian Lab) để tăng tương phản cục bộ.
-    Trả về (ảnh, mô tả các bước đã làm)."""
-    f = to_float(img)
+    Trong mỗi cửa sổ bán kính r, đầu ra là hàm tuyến tính của ảnh dẫn I:
+    q = a·I + b. Vùng phẳng (phương sai < eps) bị làm mịn mạnh; vùng có cạnh
+    (phương sai lớn) giữ nguyên => không sinh quầng sáng (halo) quanh vật thể
+    như CLAHE hay unsharp bán kính lớn."""
+    k = (2 * r + 1, 2 * r + 1)
+    mean = lambda x: cv2.boxFilter(x, -1, k, borderType=cv2.BORDER_REFLECT)
+    mI, mp = mean(I), mean(p)
+    var = mean(I * I) - mI * mI
+    cov = mean(I * p) - mI * mp
+    a = cov / (var + eps)
+    b = mp - a * mI
+    return mean(a) * I + mean(b)
+
+
+def _rgb_to_lab(img_u8):
+    """RGB uint8 -> Lab float32 (L: 0..100, a/b: khoảng -127..127)."""
+    return cv2.cvtColor(to_float(img_u8), cv2.COLOR_RGB2LAB)
+
+
+def _lab_to_rgb(lab):
+    return to_uint8(cv2.cvtColor(lab, cv2.COLOR_LAB2RGB))
+
+
+def _remove_blemishes(img: np.ndarray, skin: np.ndarray, face_w: int):
+    """Xóa mụn / đốm thâm nhỏ trên vùng da.
+
+    Một nốt mụn là một chấm NHỎ, TỐI hơn (hoặc ĐỎ hơn) vùng da xung quanh.
+        1. Lọc trung vị (median) kích thước k ≈ 1/18 bề rộng khuôn mặt cho ra
+           "da sạch" — chấm nhỏ hơn k bị xóa khỏi ảnh lọc.
+        2. Điểm nào tối hơn ảnh lọc đáng kể, hoặc đỏ hơn hẳn xung quanh => ứng viên.
+        3. Chỉ giữ các cụm có diện tích nhỏ (loại mắt, lông mày, lỗ mũi, viền môi).
+        4. Lấp các cụm đó bằng cv2.inpaint (Telea) rồi trộn mềm vào ảnh.
+    Trả về (ảnh, số đốm đã xóa)."""
+    k = int(max(5, min(31, face_w / 18))) | 1
+    lab = cv2.cvtColor(img, cv2.COLOR_RGB2LAB)          # uint8: L 0..255, a/b quanh 128
+    L, A = lab[..., 0], lab[..., 1].astype(np.float32)
+    med = cv2.medianBlur(L, k)
+    dark = (med.astype(np.int16) - L.astype(np.int16)) > 9
+    red = (A - cv2.GaussianBlur(A, (0, 0), k / 2.0)) > 6
+    red &= (med.astype(np.int16) - L.astype(np.int16)) > 2
+    cand = ((dark | red) & (skin > 0.6)).astype(np.uint8)
+    cand = cv2.morphologyEx(cand, cv2.MORPH_OPEN, np.ones((2, 2), np.uint8))
+    n, labels, stats, _ = cv2.connectedComponentsWithStats(cand, 8)
+    keep = np.zeros_like(cand)
+    max_area = (k * 0.9) ** 2
+    count = 0
+    for i in range(1, n):
+        x, y, w, h, area = stats[i]
+        if 3 <= area <= max_area and max(w, h) <= k * 1.3 and area >= 0.3 * w * h:
+            keep[labels == i] = 255
+            count += 1
+    if not count or count > 80:          # quá nhiều "đốm" => là kết cấu/hoa văn, không phải mụn
+        return img, 0
+    keep = cv2.dilate(keep, np.ones((3, 3), np.uint8), iterations=2)
+    fixed = cv2.inpaint(img, keep, 3, cv2.INPAINT_TELEA)
+    w = cv2.GaussianBlur(keep.astype(np.float32) / 255.0, (0, 0), 1.5)[..., None]
+    out = img.astype(np.float32) * (1 - w) + fixed.astype(np.float32) * w
+    return np.clip(out + 0.5, 0, 255).astype(np.uint8), count
+
+
+def is_graphic(img: np.ndarray) -> bool:
+    """Ảnh đồ họa / hoạt hình (thumbnail, minh họa)? — nhiều vùng màu rất rực và cạnh sắc.
+    Ảnh chụp thật hiếm khi có > 30% điểm ảnh bão hòa cao. Với ảnh đồ họa, không chạy các
+    bước làm đẹp da (dễ xóa nhầm chi tiết vẽ) mà chỉ tối ưu nhẹ ánh sáng và màu."""
+    small, _ = resize_long_side(img, 600)
+    sat = cv2.cvtColor(small, cv2.COLOR_RGB2HSV)[..., 1]
+    g = cv2.cvtColor(small, cv2.COLOR_RGB2GRAY).astype(np.float32)
+    m = cv2.blur(g, (5, 5))
+    sd = np.sqrt(np.maximum(cv2.blur(g * g, (5, 5)) - m * m, 0))
+    return float((sat > 150).mean()) > 0.30 and float((sd > 12).mean()) > 0.22
+
+
+def auto_enhance(img: np.ndarray, strength: float = 70) -> tuple[np.ndarray, str]:
+    """TỐI ƯU MỘT CHẠM — làm đẹp tự nhiên như ảnh chụp từ máy ảnh chuyên nghiệp.
+
+    Tự nhận diện khuôn mặt (chính diện và nghiêng). Nếu là ảnh chân dung thì
+    ưu tiên làm đẹp da; nếu không thì chỉ tối ưu ánh sáng và màu sắc.
+    Các bước (đều ở mức nhẹ, có giới hạn để ảnh không bị "quá tay"):
+        1. Giảm nhiễu màu (chroma noise) — ảnh điện thoại sạch màu như máy ảnh.
+        2. Cân bằng trắng theo các bề mặt gần trung tính (trời, tường, đường)
+           và theo màu da của khuôn mặt (đưa sắc da về dải tự nhiên).
+        3. Chỉnh độ sáng: chân dung lấy khuôn mặt làm chuẩn (đưa độ sáng da về
+           ~L 66), ảnh thường lấy trung vị cả ảnh — bằng đường cong mềm, không cắt sáng.
+        4. Giữ chi tiết vùng sáng/tối (giống HDR nhẹ, KHÔNG quầng sáng): tách lớp
+           nền bằng Guided Filter, nén lớp nền, giữ nguyên lớp chi tiết.
+        5. Tăng màu "thông minh" (vibrance): màu nhạt tăng nhiều, màu đã đậm và
+           màu da tăng ít — tránh da bị cam/đỏ.
+        6. Chân dung: xóa mụn nhỏ, làm mờ nếp nhăn + mịn da nhẹ (giữ kết cấu),
+           làm sáng và đều màu da, giảm đỏ.
+        7. Làm nét đầu ra cho chi tiết (tóc, mắt, quần áo, cảnh) nhưng KHÔNG làm
+           nét vùng da.
+    strength 0..100 điều chỉnh mức độ chung (mặc định 70)."""
+    s = max(0.0, min(1.0, strength / 100.0))
+    if s <= 0:
+        return img, "không thay đổi"
+    H, W = img.shape[:2]
     notes = []
-    # --- 1. Cân bằng trắng
+    faces = _faces(img)
+    graphic = is_graphic(img)
+    portrait = len(faces) > 0 and not graphic
+    face_w = int(np.median([f[2] for f in faces])) if portrait else 0
+    if graphic:
+        notes.append("ảnh đồ họa/hoạt hình – chỉ tối ưu nhẹ ánh sáng và màu")
+    else:
+        notes.append(f"nhận diện {len(faces)} khuôn mặt" if portrait else "không thấy khuôn mặt – tối ưu ánh sáng/màu")
+
+    # ---- 1. giảm nhiễu màu (chỉ kênh màu Cr/Cb, không làm mờ chi tiết sáng tối)
+    ycc = cv2.cvtColor(img, cv2.COLOR_RGB2YCrCb)
+    sig = max(1.0, min(H, W) / 700.0)
+    for c in (1, 2):
+        ch = ycc[..., c]
+        sm = cv2.bilateralFilter(ch, 0, 10, sig * 2)
+        ycc[..., c] = cv2.addWeighted(sm, 0.7 * s + 0.2, ch, 0.8 - 0.7 * s, 0)
+    work = cv2.cvtColor(ycc, cv2.COLOR_YCrCb2RGB)
+
+    lab = _rgb_to_lab(work)
+    L, A, B = lab[..., 0], lab[..., 1], lab[..., 2]
+    skin = skin_mask(work) if portrait else None
+    face_sel = None
+    if portrait:
+        face_sel = np.zeros((H, W), bool)
+        for (x, y, w, h) in faces:
+            face_sel[max(0, y + h // 6):min(H, y + h * 5 // 6), max(0, x + w // 6):min(W, x + w * 5 // 6)] = True
+        face_sel &= skin > 0.5
+        if face_sel.sum() < 50:
+            face_sel = None
+
+    # ---- 2. cân bằng trắng (ảnh đồ họa giữ nguyên màu chủ ý của người vẽ)
+    chroma = np.sqrt(A * A + B * B)
+    neutral = (chroma < 14) & (L > 20) & (L < 92)
+    da = db = 0.0
+    if neutral.sum() > 0.02 * H * W and not graphic:
+        da, db = -float(np.median(A[neutral])), -float(np.median(B[neutral]))
+    if face_sel is not None:
+        # màu da tự nhiên: góc màu (hue) khoảng 45–62°; đẩy nhẹ về dải này
+        fa, fb = float(np.median(A[face_sel])), float(np.median(B[face_sel]))
+        hue = math.degrees(math.atan2(fb, fa))
+        target = min(max(hue, 45.0), 62.0)
+        if abs(target - hue) > 1:
+            c = math.hypot(fa, fb)
+            ta, tb = c * math.cos(math.radians(target)), c * math.sin(math.radians(target))
+            da = 0.5 * da + 0.5 * (ta - fa)
+            db = 0.5 * db + 0.5 * (tb - fb)
+    lim = 7.0
+    da, db = float(np.clip(da, -lim, lim)) * (0.5 + 0.4 * s), float(np.clip(db, -lim, lim)) * (0.5 + 0.4 * s)
+    if abs(da) > 0.3 or abs(db) > 0.3:
+        A += da
+        B += db
+        notes.append(f"cân bằng trắng (a {da:+.1f}, b {db:+.1f})")
+
+    # ---- 3. độ sáng theo khuôn mặt (chân dung) hoặc theo cả ảnh
+    #      Chân dung: chỉ nâng sáng toàn ảnh một phần (giữ trời/cảnh tự nhiên), phần
+    #      còn lại "đánh đèn" riêng vùng mặt–cổ bằng mặt nạ mềm (giống đèn fill-flash).
+    face_light = None
+    if face_sel is not None:
+        ref = float(np.median(L[face_sel]))
+        target = 64.0
+    else:
+        ref = float(np.median(L))
+        # chỉ làm sáng ảnh tối, không làm tối ảnh sáng; ảnh đồ họa giữ nguyên độ sáng chủ ý
+        target = ref if graphic else (50.0 if ref < 50 else ref)
+    ref = min(max(ref, 5.0), 95.0)
+    g = math.log(target / 100.0) / math.log(ref / 100.0)
+    g = float(np.clip(g, 0.78, 1.12))
+    g_all = 1.0 + (g - 1.0) * ((0.45 if face_sel is not None else 0.6) + 0.4 * s)
+    if abs(g_all - 1.0) > 0.015:
+        L = 100.0 * np.power(np.clip(L / 100.0, 0, 1), g_all)
+        notes.append(f"chỉnh sáng (gamma {g_all:.2f})")
+    if face_sel is not None:
+        now = float(np.median(L[face_sel]))
+        gap = min(max(target - now, 0.0), 12.0) * (0.5 + 0.4 * s)
+        if gap > 0.5:
+            sel = (cv2.dilate((skin > 0.35).astype(np.uint8), np.ones((5, 5), np.uint8)) > 0).astype(np.float32)
+            face_light = cv2.GaussianBlur(sel, (0, 0), max(3.0, face_w / 6.0))
+            face_light = face_light / max(float(face_light.max()), 1e-6)
+            L = L + gap * face_light * (1.0 - L / 115.0)
+            notes.append(f"đánh sáng khuôn mặt +{gap:.1f}")
+
+    # ---- 4. giữ chi tiết vùng sáng/tối (tone mapping cục bộ không quầng)
+    Ln = L / 100.0
+    r = max(8, int(min(H, W) / 25))
+    base = guided_filter(Ln, Ln, r, 0.02)
+    detail = Ln - base
+    hi = np.clip((base - 0.72) / 0.28, 0, 1)        # vùng rất sáng (trời): nén xuống
+    lo = np.clip((0.28 - base) / 0.28, 0, 1)        # vùng rất tối: nâng lên
+    base = base - 0.10 * s * hi * (base - 0.72) * 2.2 + 0.08 * s * lo * (0.28 - base) * 2.5
+    Ln = base + detail * (1.0 + 0.06 * s)
+    # đường cong S rất nhẹ cho "độ trong" của ảnh
+    Ln = np.clip(Ln, 0, 1)
+    Ln = Ln + 0.06 * s * np.sin(2 * np.pi * (Ln - 0.5)) / (2 * np.pi) * 4 * (Ln * (1 - Ln))
+    L = np.clip(Ln, 0, 1) * 100.0
+    notes.append("giữ chi tiết vùng sáng/tối")
+
+    # ---- 5. vibrance: màu nhạt tăng nhiều hơn, bảo vệ màu da
+    chroma = np.sqrt(A * A + B * B)
+    boost = 1.0 + 0.22 * s * np.clip(1.0 - chroma / 55.0, 0, 1)
+    if skin is not None:
+        boost = 1.0 + (boost - 1.0) * (1.0 - 0.75 * skin)
+    A *= boost
+    B *= boost
+    lab = np.dstack([L, A, B]).astype(np.float32)
+    out = _lab_to_rgb(lab)
+
+    # ---- 6. làm đẹp chân dung
+    if portrait and skin is not None and skin.max() > 0.3:
+        if face_w >= 110:                                    # mặt quá nhỏ thì không đủ chi tiết để xóa mụn
+            out, nb = _remove_blemishes(out, skin, face_w)
+            if nb:
+                notes.append(f"xóa {nb} đốm mụn/thâm")
+        out = smooth_skin(out, 22 + 30 * s, mask=skin)       # mờ nếp nhăn + mịn nhẹ, giữ 30% kết cấu
+        lab = _rgb_to_lab(out)
+        lift = (3.0 + 3.0 * s) * skin                        # sáng da nhẹ
+        lab[..., 0] = np.clip(lab[..., 0] + lift * (1.0 - lab[..., 0] / 100.0) * 1.4, 0, 100)
+        lab[..., 1] *= 1.0 - 0.10 * s * skin                 # giảm đỏ, da đều màu
+        out = _lab_to_rgb(lab)
+        notes.append("làm mịn nhẹ, mờ nếp nhăn, sáng da")
+
+    # ---- 7. làm nét đầu ra, trừ vùng da
+    f = to_float(out)
     y = luma(f)
-    mid = (y > 0.12) & (y < 0.92)
-    if mid.sum() > 500:
-        means = f[mid].mean(axis=0)
-        gray = means.mean()
-        gains = np.clip(gray / np.maximum(means, 1e-4), 0.8, 1.25)
-        gains = 1.0 + 0.7 * (gains - 1.0)            # chỉ sửa 70% để giữ "không khí" ảnh
-        f = f * gains.astype(np.float32)
-        notes.append("cân bằng trắng R×%.2f G×%.2f B×%.2f" % tuple(gains))
-    # --- 2. Kéo giãn mức theo histogram độ sáng
-    y = luma(np.clip(f, 0, 1))
-    lo, hi = np.percentile(y, [0.5, 99.5])
-    lo = min(lo, 0.10)
-    hi = max(hi, 0.80)
-    if hi - lo > 0.05:
-        f = (f - lo) / (hi - lo)
-        notes.append("giãn mức đen/trắng %.0f→0, %.0f→255" % (lo * 255, hi * 255))
-    f = np.clip(f, 0, 1)
-    # --- 3. Gamma
-    m = float(luma(f).mean())
-    if 0.05 < m < 0.95:
-        g = math.log(0.48) / math.log(m)
-        g = float(np.clip(g, 0.75, 1.35))
-        g = 1.0 + 0.6 * (g - 1.0)
-        if abs(g - 1.0) > 0.02:
-            f = np.power(f, g)
-            notes.append("gamma %.2f" % g)
-    out = to_uint8(f)
-    # --- 4. CLAHE trên kênh L
-    lab = cv2.cvtColor(out, cv2.COLOR_RGB2LAB)
-    clahe = cv2.createCLAHE(clipLimit=1.4, tileGridSize=(8, 8))
-    L2 = clahe.apply(lab[..., 0])
-    lab[..., 0] = cv2.addWeighted(L2, 0.5, lab[..., 0], 0.5, 0)
-    out = cv2.cvtColor(lab, cv2.COLOR_LAB2RGB)
-    notes.append("tương phản cục bộ (CLAHE)")
-    # Tăng bão hòa nhẹ 8%
-    out = to_uint8(apply_matrix(to_float(out), adjustment_matrix(0, 0, 8)))
+    det = y - cv2.GaussianBlur(y, (0, 0), max(0.8, min(H, W) / 1600.0))
+    det = np.sign(det) * np.maximum(np.abs(det) - 0.006, 0)
+    wsharp = 0.45 * s * (np.ones_like(y) if skin is None else (1.0 - 0.9 * skin))
+    out = to_uint8(f + (det * wsharp)[..., None])
+    notes.append("làm nét chi tiết")
     return out, ", ".join(notes)
 
 
-_FACE_CASCADE = None
+_CASCADES = None
+_YUNET = None
+
+
+def _yunet_faces(small: np.ndarray):
+    """Nhận diện khuôn mặt bằng mạng nơ-ron YuNet (OpenCV Zoo, giấy phép MIT, 230 KB).
+    Nhận được cả mặt nghiêng, đeo kính, ánh sáng yếu — tốt hơn nhiều so với Haar."""
+    global _YUNET
+    import os
+    from ..engine import _asset_dir
+    if _YUNET is None:
+        path = os.path.join(_asset_dir(), "face_detection_yunet_2023mar.onnx")
+        if not hasattr(cv2, "FaceDetectorYN") or not os.path.isfile(path):
+            _YUNET = False
+        else:
+            _YUNET = cv2.FaceDetectorYN.create(path, "", (320, 320), 0.6, 0.3, 50)
+    if _YUNET is False:
+        return None
+    h, w = small.shape[:2]
+    _YUNET.setInputSize((w, h))
+    _, res = _YUNET.detect(cv2.cvtColor(small, cv2.COLOR_RGB2BGR))
+    if res is None:
+        return []
+    return [[int(r[0]), int(r[1]), int(r[2]), int(r[3])] for r in res if r[2] > 12 and r[3] > 12]
 
 
 def _faces(img: np.ndarray):
-    """Tìm khuôn mặt (Haar cascade có sẵn trong OpenCV). Trả về list (x,y,w,h)."""
-    global _FACE_CASCADE
+    """Tìm khuôn mặt: ưu tiên YuNet; dự phòng Haar cascade (chính diện + nghiêng).
+    Trả về list (x, y, w, h) theo tọa độ ảnh gốc."""
+    global _CASCADES
     try:
-        if _FACE_CASCADE is None:
-            path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
-            _FACE_CASCADE = cv2.CascadeClassifier(path)
         small, k = resize_long_side(img, 900)
-        gray = cv2.cvtColor(small, cv2.COLOR_RGB2GRAY)
-        found = _FACE_CASCADE.detectMultiScale(gray, 1.1, 5, minSize=(30, 30))
-        return [tuple(int(v / k) for v in f) for f in found]
+        found = None
+        try:
+            found = _yunet_faces(small)
+        except Exception:
+            found = None
+        if not found:
+            if _CASCADES is None:
+                base = cv2.data.haarcascades
+                _CASCADES = [cv2.CascadeClassifier(base + n) for n in
+                             ("haarcascade_frontalface_default.xml", "haarcascade_profileface.xml")]
+                _CASCADES = [c for c in _CASCADES if not c.empty()]
+            gray = cv2.equalizeHist(cv2.cvtColor(small, cv2.COLOR_RGB2GRAY))
+            mins = max(24, int(min(gray.shape) / 14))
+            found = []
+            for i, cas in enumerate(_CASCADES):
+                for flip in ((False, True) if i == 1 else (False,)):   # mặt nghiêng: thử cả 2 hướng
+                    g = cv2.flip(gray, 1) if flip else gray
+                    for (x, y, w, h) in cas.detectMultiScale(g, 1.1, 5, minSize=(mins, mins)):
+                        if flip:
+                            x = g.shape[1] - x - w
+                        found.append([int(x), int(y), int(w), int(h)])
+        boxes = []                                   # gộp các khung trùng nhau
+        for b in sorted(found, key=lambda b: -b[2] * b[3]):
+            if all(_iou(b, o) < 0.3 for o in boxes):
+                boxes.append(b)
+        return [tuple(int(v / k) for v in b) for b in boxes]
     except Exception:
         return []
+
+
+def _iou(a, b):
+    ax, ay, aw, ah = a
+    bx, by, bw, bh = b
+    ix = max(0, min(ax + aw, bx + bw) - max(ax, bx))
+    iy = max(0, min(ay + ah, by + bh) - max(ay, by))
+    inter = ix * iy
+    return inter / float(aw * ah + bw * bh - inter + 1e-9)
 
 
 def skin_mask(img: np.ndarray) -> np.ndarray:
