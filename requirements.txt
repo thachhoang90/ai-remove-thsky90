@@ -1,6 +1,6 @@
 # Versions used for the Windows build (verified end-to-end under Wine as well).
 numpy==2.0.2
-opencv-python-headless==5.0.0.93
+opencv-python-headless==4.11.0.86
 pillow==12.3.0
 pillow-heif==1.8.1
 PySide6-Essentials==6.8.3

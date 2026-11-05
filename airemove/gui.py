@@ -1095,7 +1095,7 @@ class MainWindow(QMainWindow):
         t1 = QLabel("AI Remove <span style='color:#A5B4FC;font-weight:500'>– thsky90</span>")
         t1.setObjectName("AppTitle")
         t1.setTextFormat(Qt.RichText)
-        t2 = QLabel("Gỡ logo ngôi sao Gemini khỏi ảnh và video, tùy chọn xóa metadata ẩn")
+        t2 = QLabel("Gỡ logo ngôi sao Gemini khỏi ảnh và video, xóa metadata ẩn, chỉnh sửa ảnh cho mạng xã hội")
         t2.setObjectName("AppSub")
         tl.addWidget(t1)
         tl.addWidget(t2)
@@ -1111,6 +1111,9 @@ class MainWindow(QMainWindow):
         self.tab_vid = MediaTab("video", self)
         self.tabs.addTab(self.tab_img, "  Ảnh  ")
         self.tabs.addTab(self.tab_vid, "  Video  ")
+        from .editor.tab import EditorTab
+        self.tab_edit = EditorTab(self)
+        self.tabs.addTab(self.tab_edit, "  Chỉnh sửa ảnh  ")
         self.tabs.currentChanged.connect(self._on_tab)
         for t in (self.tab_img, self.tab_vid):
             t.status.connect(self.show_status)
@@ -1118,6 +1121,7 @@ class MainWindow(QMainWindow):
 
         # bottom panel
         bottom = QFrame()
+        self.bottom = bottom
         bottom.setObjectName("Bottom")
         bl = QGridLayout(bottom)
         bl.setContentsMargins(16, 10, 16, 12)
@@ -1182,12 +1186,16 @@ class MainWindow(QMainWindow):
         self.tabs.setTabText(1, f"  Video ({nv})  " if nv else "  Video  ")
 
     def _on_tab(self, i):
+        # Tab "Chỉnh sửa ảnh" có nút xuất riêng -> ẩn thanh xử lý hàng loạt bên dưới.
+        self.bottom.setVisible(self.tabs.widget(i) is not getattr(self, "tab_edit", None))
         self.refresh_start_label()
 
     def refresh_start_label(self):
         if not hasattr(self, "btn_start") or not hasattr(self, "tabs"):
             return
         tab = self.tabs.currentWidget()
+        if not isinstance(tab, MediaTab):
+            return
         what = "ảnh" if tab.kind == "image" else "video"
         n, k = len(tab.items), tab.selected_count()
         self.btn_start.setText(f"Xử lý {k} {what} đã chọn" if n and k < n else f"Bắt đầu xử lý {what}")
@@ -1209,6 +1217,11 @@ class MainWindow(QMainWindow):
 
     def dropEvent(self, e):
         paths = [u.toLocalFile() for u in e.mimeData().urls() if u.isLocalFile()]
+        if self.tabs.currentWidget() is getattr(self, "tab_edit", None):
+            imgs = [p for p in paths if batch.is_image(p)]
+            if imgs:
+                self.tab_edit.open_image(imgs[0])
+            return
         imgs = [p for p in paths if os.path.isdir(p) or batch.is_image(p)]
         vids = [p for p in paths if os.path.isdir(p) or batch.is_video(p)]
         if any(batch.is_video(p) for p in paths) and not any(batch.is_image(p) for p in paths):
@@ -1224,6 +1237,8 @@ class MainWindow(QMainWindow):
     # ---- batch -------------------------------------------------------------------
     def start(self):
         tab = self.tabs.currentWidget()
+        if not isinstance(tab, MediaTab):
+            return
         if not tab.items:
             QMessageBox.information(self, APP_NAME, "Danh sách đang trống. Hãy chọn tệp hoặc thư mục.")
             return
@@ -1292,6 +1307,12 @@ class MainWindow(QMainWindow):
         tab.logbox.appendPlainText(msg)
 
     def closeEvent(self, e):
+        if getattr(self, "tab_edit", None) is not None and self.tab_edit.bulk_running():
+            if QMessageBox.question(self, APP_NAME, "Đang đóng logo hàng loạt. Dừng và thoát?") != QMessageBox.Yes:
+                e.ignore()
+                return
+            self.tab_edit.stop_bulk()
+            self.tab_edit._bulk.wait(5000)
         if self.worker and self.worker.isRunning():
             if QMessageBox.question(self, APP_NAME, "Đang xử lý. Dừng và thoát?") != QMessageBox.Yes:
                 e.ignore()

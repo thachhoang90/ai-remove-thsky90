@@ -1,6 +1,6 @@
 # AI Remove - thsky90
 
-Gỡ logo ngôi sao Gemini (✦) khỏi ảnh và video do Gemini / Veo tạo ra, kèm tùy chọn xóa metadata ẩn (EXIF, XMP, IPTC, C2PA / Content Credentials).
+Gỡ logo ngôi sao Gemini (✦) khỏi ảnh và video do Gemini / Veo tạo ra, kèm tùy chọn xóa metadata ẩn (EXIF, XMP, IPTC, C2PA / Content Credentials), và tab **Chỉnh sửa ảnh** cho mạng xã hội.
 
 - **Bản Windows**: tải `AI-Remove-thsky90-<phiên bản>-Setup.exe` ở mục **Releases**, cài đặt không cần quyền admin.
 - **Bản web**: chạy trên GitHub Pages, xử lý 100% trong trình duyệt (tệp không được tải lên máy chủ).
@@ -17,6 +17,20 @@ Gỡ logo ngôi sao Gemini (✦) khỏi ảnh và video do Gemini / Veo tạo ra
 | Tự dò logo / định vị thủ công có xem trước | Có | Có |
 | Gỡ metadata ẩn | Có | Có |
 | Chọn thư mục xuất | Có | Chrome/Edge: có; trình duyệt khác: tải .zip |
+
+## Tab "Chỉnh sửa ảnh" (từ bản 2.1)
+
+Giao diện tối, có ở cả bản Windows và bản web:
+
+| Module | Chức năng |
+|---|---|
+| 1. Tệp và Xuất bản | Đọc/ghi JPG, PNG, WEBP (bản Windows đọc thêm HEIC); chuyển định dạng khi xuất; **nén thông minh** (thu về kích thước nền tảng + tìm mức nén nhỏ nhất có SSIM ≥ 0,985); khung cắt một chạm: Facebook Cover, FB Post 1.91:1, Instagram 1:1, 4:5, Stories/TikTok 9:16, YouTube 16:9 (khung di chuyển, co giãn được); xem trước lưới Instagram 3×3 / bảng tin Facebook |
+| 2. Đóng logo | Logo PNG trong suốt, 9 vị trí, độ đậm 0–100%, kích thước theo % ảnh, lề; lưu/xóa mẫu (preset); đóng logo hàng loạt cả thư mục chạy nền, có nút ngưng |
+| 3. Bộ lọc và Điều chỉnh | 8 bộ lọc (Vintage, Cinematic, Sáng/Tối giản, Đen trắng, Tông ấm, Tông lạnh, Phim bạc màu, Rực rỡ) có cường độ; độ sáng, tương phản, bão hòa (gộp một ma trận màu 3×4), độ sắc nét (unsharp mask) — xem trước tức thì |
+| 4. Làm đẹp và AI | Tối ưu một chạm theo histogram; làm mịn da (Bilateral Filter trên Windows / Guided Filter trên web + tách tần số, tự nhận vùng da); xóa vật thể bằng cọ vẽ + inpainting (cv2.inpaint Telea/Navier–Stokes; bản web dùng Telea viết bằng JavaScript) |
+| 5. Giao diện | Undo/Redo 30 bước (Ctrl+Z / Ctrl+Y) và danh sách lịch sử; nút "Giữ để so sánh" trước/sau; giao diện tối (QSS trên Windows, CSS trên web) |
+
+Mã nguồn có chú thích tiếng Việt chi tiết: `airemove/editor/` (Windows) và `web/js/editor/` (web).
 
 ## Thuật toán
 
@@ -69,12 +83,14 @@ airemove/engine.py        thuật toán dò + khử logo
 airemove/video.py         xử lý video (ffmpeg, Y/U/V, tự hiệu chuẩn alpha)
 airemove/imagefile.py     đọc/ghi ảnh, metadata
 airemove/gui.py           giao diện PySide6
-web/                      bản web (JavaScript + ffmpeg.wasm)
+airemove/editor/          tab "Chỉnh sửa ảnh" (ops, canvas, lịch sử, xem trước MXH, đóng logo hàng loạt)
+web/                      bản web (JavaScript + ffmpeg.wasm); web/js/editor/ = tab chỉnh sửa ảnh
 packaging/windows/        launcher .exe, kịch bản NSIS, script build
 ```
 
 ## Lịch sử phiên bản
 
+- **2.1.0**: thêm tab "Chỉnh sửa ảnh" (5 module ở trên) cho cả bản Windows và bản web; giữ nguyên toàn bộ tính năng gỡ logo/metadata của bản 1.1.
 - **1.1.0**: sửa lỗi build bộ cài trên GitHub Actions (đường dẫn `dist` tương đối); giao diện mới: tab Ảnh/Video nổi bật, nút to hơn và có màu, thanh trạng thái lớn hơn, cột danh sách rộng hơn; thêm cột tích chọn (chỉ xử lý/tải các mục đã chọn), nút "Tải các mục đã chọn" và "Ngưng tiến trình" (bản web; bản Windows có cột tích chọn và nút "Ngưng tiến trình"); sửa lỗi thanh chọn khung hình video hiện cả ở tab Ảnh trên bản web.
 - **1.0.0**: phát hành đầu tiên.
 

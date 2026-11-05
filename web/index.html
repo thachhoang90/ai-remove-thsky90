@@ -21,6 +21,7 @@
 <nav class="tabs">
   <button class="tab active" data-kind="image">Ảnh <b id="cntImage"></b></button>
   <button class="tab" data-kind="video">Video <b id="cntVideo"></b></button>
+  <button class="tab tab-edit" data-kind="editor">Chỉnh sửa ảnh</button>
 </nav>
 
 <main class="main">
@@ -76,6 +77,104 @@
   </section>
 </main>
 
+
+<!-- ===================== TAB CHỈNH SỬA ẢNH (giao diện tối) ===================== -->
+<section id="editor" class="editor" hidden>
+  <div class="ed-top">
+    <label class="eb accent">Mở ảnh…<input type="file" id="edOpen" accept=".jpg,.jpeg,.jfif,.png,.webp,.bmp,.gif" hidden></label>
+    <button class="eb good" id="edExportTop">Xuất ảnh…</button>
+    <button class="eb" id="edUndo" title="Ctrl+Z">↶ Hoàn tác</button>
+    <button class="eb" id="edRedo" title="Ctrl+Y">↷ Làm lại</button>
+    <button class="eb compare" id="edCompare" title="Nhấn giữ để xem ảnh gốc">Giữ để so sánh</button>
+    <button class="eb" id="edFit">Vừa khung</button>
+    <button class="eb" id="edZoom100">100%</button>
+    <span class="ed-info" id="edInfo">Chưa mở ảnh</span>
+  </div>
+  <div class="ed-body">
+    <aside class="ed-panel">
+      <details class="ed-sec" data-sec="file">
+        <summary>1. Tệp và Xuất bản</summary>
+        <h4>Khung cắt mẫu một chạm</h4>
+        <div class="ed-grid2" id="edPresets"></div>
+        <label class="ed-chk"><input type="checkbox" id="edResize" checked> Thu về kích thước chuẩn của nền tảng khi cắt</label>
+        <div class="ed-row"><button class="eb accent" id="edCropApply" disabled>Áp dụng cắt</button><button class="eb" id="edCropCancel" disabled>Hủy cắt</button></div>
+        <p class="ed-hint">Kéo bên trong khung để di chuyển, kéo góc để co giãn (giữ đúng tỉ lệ khung mẫu).</p>
+        <h4>Xuất file</h4>
+        <div class="ed-row"><span>Định dạng</span><select id="edFmt"><option value="keep">Giữ như ảnh gốc</option><option value="jpg">JPG</option><option value="png">PNG</option><option value="webp">WEBP</option></select></div>
+        <div class="ed-slider"><span>Chất lượng</span><input type="range" id="edQuality" min="40" max="100" value="92" disabled><b>92</b></div>
+        <label class="ed-chk"><input type="checkbox" id="edSmart" checked> Nén thông minh cho mạng xã hội</label>
+        <div class="ed-row"><span>Nền tảng</span><select id="edPlatform"><option value="facebook">Facebook</option><option value="instagram">Instagram</option><option value="youtube">YouTube Thumbnail</option><option value="general">Giữ kích thước</option></select></div>
+        <p class="ed-hint">Nén thông minh: thu về đúng kích thước nền tảng hiển thị rồi tìm mức nén nhỏ nhất mà mắt thường không phân biệt được (SSIM ≥ 0,985), để Facebook/Instagram không nén lại làm mờ ảnh. File xuất không kèm metadata ẩn.</p>
+        <button class="eb good wide" id="edExport">Xuất ảnh…</button>
+        <h4>Xem trước trên mạng xã hội</h4>
+        <label class="ed-chk"><input type="checkbox" id="edSocial"> Bật chế độ xem trước</label>
+        <div class="ed-row"><label class="ed-chk"><input type="radio" name="edSocialMode" value="instagram" checked> Instagram – lưới 3×3</label><label class="ed-chk"><input type="radio" name="edSocialMode" value="facebook"> Facebook – bảng tin</label></div>
+        <label class="ed-chk"><input type="checkbox" id="edPuzzle"> Chia ảnh thành 9 ô (puzzle)</label>
+        <label class="ed-chk"><input type="checkbox" id="edSquare"> Ô vuông 1:1 (mặc định ô dọc 3:4)</label>
+      </details>
+      <details class="ed-sec" data-sec="logo">
+        <summary>2. Đóng logo</summary>
+        <div class="ed-row"><label class="eb">Chọn logo (PNG trong suốt)…<input type="file" id="edLogo" accept=".png,.webp,.jpg,.jpeg" hidden></label><canvas id="edLogoThumb" width="64" height="40"></canvas></div>
+        <label class="ed-chk"><input type="checkbox" id="edWmShow" checked> Hiện logo trên ảnh (xem trước)</label>
+        <h4>Vị trí</h4>
+        <div class="ed-pos" id="edPos"></div>
+        <div class="ed-slider"><span>Độ đậm</span><input type="range" id="edWmOpacity" min="0" max="100" value="80"><b>80%</b></div>
+        <div class="ed-slider"><span>Kích thước</span><input type="range" id="edWmScale" min="2" max="60" value="18"><b>18%</b></div>
+        <div class="ed-slider"><span>Cách mép</span><input type="range" id="edWmMargin" min="0" max="15" value="3"><b>3%</b></div>
+        <h4>Mẫu thiết lập (preset)</h4>
+        <div class="ed-row"><select id="edPreset"><option value="">— Chọn mẫu đã lưu —</option></select><button class="eb" id="edPresetSave">Lưu</button><button class="eb" id="edPresetDel">Xóa</button></div>
+        <button class="eb accent wide" id="edWmApply" disabled>Đóng logo vào ảnh</button>
+        <h4>Đóng logo hàng loạt (chạy nền)</h4>
+        <div class="ed-row"><label class="eb">Chọn thư mục ảnh…<input type="file" id="edBulkDir" webkitdirectory multiple hidden></label><label class="eb">Chọn nhiều ảnh…<input type="file" id="edBulkFiles" multiple accept=".jpg,.jpeg,.jfif,.png,.webp,.bmp" hidden></label></div>
+        <p class="ed-hint" id="edBulkInfo">Chưa chọn ảnh</p>
+        <div class="ed-row"><span>Định dạng</span><select id="edBulkFmt"><option value="keep">Giữ như ảnh gốc</option><option value="jpg">JPG</option><option value="png">PNG</option><option value="webp">WEBP</option></select></div>
+        <div class="ed-row"><button class="eb good" id="edBulkStart">Bắt đầu đóng logo</button><button class="eb danger" id="edBulkStop" disabled>Ngưng</button></div>
+        <div class="ed-prog"><div id="edBulkBar"></div><span id="edBulkText">Chưa chạy</span></div>
+        <p class="ed-hint">Kết quả lưu vào thư mục bạn chọn (Chrome/Edge) hoặc tải về dạng .zip.</p>
+      </details>
+      <details class="ed-sec" data-sec="adjust" open>
+        <summary>3. Bộ lọc và Điều chỉnh</summary>
+        <h4>Bộ lọc màu</h4>
+        <div class="ed-filters" id="edFilters"></div>
+        <div class="ed-slider"><span>Cường độ</span><input type="range" id="edFAmount" min="0" max="100" value="100"><b>100%</b></div>
+        <h4>Điều chỉnh (xem trước tức thì)</h4>
+        <div class="ed-slider"><span>Độ sáng</span><input type="range" id="edBright" min="-100" max="100" value="0"><b>0</b></div>
+        <div class="ed-slider"><span>Tương phản</span><input type="range" id="edContrast" min="-100" max="100" value="0"><b>0</b></div>
+        <div class="ed-slider"><span>Bão hòa</span><input type="range" id="edSat" min="-100" max="100" value="0"><b>0</b></div>
+        <div class="ed-slider"><span>Sắc nét</span><input type="range" id="edSharp" min="0" max="100" value="0"><b>0</b></div>
+        <div class="ed-row"><button class="eb accent" id="edAdjApply">Áp dụng</button><button class="eb" id="edAdjReset">Đặt lại</button></div>
+        <p class="ed-hint">Sáng/tương phản/bão hòa được gộp thành một ma trận màu 3×4, áp một lần cho mỗi điểm ảnh nên phản hồi tức thì. Nhấp đúp tên thanh trượt để đặt lại.</p>
+      </details>
+      <details class="ed-sec" data-sec="retouch">
+        <summary>4. Làm đẹp và AI</summary>
+        <button class="eb accent wide" id="edAuto">Tối ưu một chạm (Auto Enhance)</button>
+        <p class="ed-hint">Cân bằng trắng, giãn mức đen/trắng, hiệu chỉnh sáng dựa trên histogram và tăng tương phản cục bộ.</p>
+        <h4>Làm mịn da</h4>
+        <div class="ed-slider"><span>Mịn da</span><input type="range" id="edSkin" min="0" max="100" value="0"><b>0</b></div>
+        <button class="eb wide" id="edSkinApply">Áp dụng làm mịn</button>
+        <p class="ed-hint">Guided Filter (lọc giữ cạnh) + tách tần số: làm phẳng khuyết điểm, giữ đường nét và 30% kết cấu da để không bị bệt; chỉ áp lên vùng màu da.</p>
+        <h4>Xóa vật thể thừa</h4>
+        <button class="eb wide" id="edBrush">Bật cọ vẽ</button>
+        <div class="ed-slider"><span>Cỡ cọ</span><input type="range" id="edBrushSize" min="4" max="300" value="40"><b>40 px</b></div>
+        <div class="ed-row"><button class="eb danger" id="edRemove" disabled>Xóa vùng đã tô</button><button class="eb" id="edClearMask">Xóa nét tô</button></div>
+        <p class="ed-hint">Chuột trái: tô vùng cần xóa. Chuột phải: tẩy. Lăn chuột để phóng to, giữ nút giữa để kéo ảnh. Vùng đã tô được lấp bằng thuật toán Telea (như cv2.inpaint).</p>
+      </details>
+      <details class="ed-sec" data-sec="history">
+        <summary>5. Lịch sử thao tác</summary>
+        <div class="ed-row"><button class="eb" id="edUndo2">↶ Hoàn tác</button><button class="eb" id="edRedo2">↷ Làm lại</button></div>
+        <ol class="ed-hist" id="edHist"></ol>
+        <p class="ed-hint">Lưu tối đa 30 bước. Bấm vào một dòng để quay lại trạng thái đó. Ctrl+Z hoàn tác, Ctrl+Y làm lại.</p>
+      </details>
+    </aside>
+    <div class="ed-stage" id="edStage">
+      <canvas id="edCanvas"></canvas>
+      <canvas id="edSocialCanvas" hidden></canvas>
+      <div class="ed-empty" id="edEmpty">Mở ảnh (hoặc kéo thả ảnh vào đây) để bắt đầu chỉnh sửa</div>
+    </div>
+  </div>
+  <div class="ed-status" id="edStatus">Mở ảnh để bắt đầu.</div>
+</section>
+
 <footer class="bar card">
   <label class="chk"><input type="checkbox" id="strip" checked> Gỡ metadata ẩn (EXIF, XMP, IPTC, C2PA, thông tin AI)</label>
   <button class="btn big folder" id="pickOut">Chọn thư mục lưu…</button>
@@ -89,5 +188,6 @@
 
 <script src="vendor/jszip.min.js"></script>
 <script type="module" src="js/app.js"></script>
+<script type="module" src="js/editor/editor.js"></script>
 </body>
 </html>

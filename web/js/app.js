@@ -137,6 +137,7 @@ view.cv.addEventListener('pointermove', e => {
 view.cv.addEventListener('pointerup', () => { view.drag = null; });
 window.addEventListener('resize', () => (view.fitted ? view.fit() : view.draw()));
 window.addEventListener('keydown', e => {
+  if (document.body.classList.contains('editing')) return;
   if (!view.editable || !view.box || ['INPUT', 'SELECT'].includes(document.activeElement.tagName)) return;
   const st = e.shiftKey ? 0.25 : 1; let [x, y, s] = view.box;
   if (e.key === 'ArrowLeft') x -= st; else if (e.key === 'ArrowRight') x += st;
@@ -204,6 +205,15 @@ function updateCounts() {
 }
 
 function switchTab(kind) {
+  // Tab "Chỉnh sửa ảnh" có giao diện riêng (editor.js): ẩn danh sách + thanh xử lý hàng loạt.
+  const editing = kind === 'editor';
+  document.body.classList.toggle('editing', editing);
+  $('editor').hidden = !editing;
+  if (editing) {
+    document.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b.dataset.kind === 'editor'));
+    window.dispatchEvent(new Event('editor-show'));
+    return;
+  }
   state.kind = kind;
   document.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b.dataset.kind === kind));
   $('listTitle').textContent = kind === 'image' ? 'Danh sách ảnh' : 'Danh sách video';
@@ -553,6 +563,7 @@ document.addEventListener('drop', async e => {
   const its = [...(e.dataTransfer.items || [])];
   if (its.length && its[0].webkitGetAsEntry) { for (const i of its) { const en = i.webkitGetAsEntry(); if (en) await walk(en, ''); } }
   else files.push(...e.dataTransfer.files);
+  if (document.body.classList.contains('editing')) { window.dispatchEvent(new CustomEvent('editor-drop', { detail: files })); return; }
   addFiles(files);
 });
 
