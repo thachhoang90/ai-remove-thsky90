@@ -19,7 +19,13 @@ const tab = () => state.tabs[state.kind];
 // ---------------------------------------------------------------------------
 // logging & progress
 function log(msg) { const l = $('log'); l.textContent += msg + '\n'; l.scrollTop = l.scrollHeight; }
-function progress(f, text) { $('progBar').style.width = `${Math.round(f * 100)}%`; $('progText').textContent = text; }
+function progress(f, text, cls = '') {
+  const pr = $('prog');
+  pr.style.setProperty('--pw', pr.clientWidth + 'px');
+  pr.className = 'prog ' + cls;
+  $('progBar').style.width = `${Math.round(Math.max(0, Math.min(1, f)) * 100)}%`;
+  $('progText').textContent = text; $('progText2').textContent = text;
+}
 function setDetect(text, cls = '') { const d = $('detect'); d.textContent = text; d.className = 'detect ' + cls; }
 
 // ---------------------------------------------------------------------------
@@ -152,7 +158,7 @@ function addFiles(files) {
     const t = state.tabs[kind];
     const rel = f.webkitRelativePath || f.name;
     if (t.items.some(it => it.rel === rel && it.file.size === f.size)) continue;
-    t.items.push({ file: f, rel, kind, status: 'Chờ xử lý', manualBox: null, geo: null, size: null });
+    t.items.push({ file: f, rel, kind, status: 'Chờ xử lý', manualBox: null, geo: null, size: null, checked: true });
     n++;
     if (kind !== state.kind && !tab().items.length) switchTab(kind);
   }
@@ -166,12 +172,31 @@ function renderList() {
   tab().items.forEach((it, i) => {
     const li = document.createElement('li');
     if (i === tab().cur) li.className = 'sel';
-    const name = document.createElement('span'); name.textContent = it.rel;
+    const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = !!it.checked;
+    cb.title = 'Chọn để xử lý / tải về';
+    cb.onclick = e => { e.stopPropagation(); it.checked = cb.checked; updateSel(); };
+    const name = document.createElement('span'); name.className = 'nm'; name.textContent = it.rel; name.title = it.rel;
     const st = document.createElement('span'); st.className = 'st ' + (it.cls || '');
-    if (it.url) { const a = document.createElement('a'); a.href = it.url; a.download = it.outName; a.textContent = it.status + ' ⤓'; st.appendChild(a); }
-    else st.textContent = it.status;
-    li.append(name, st); li.onclick = () => select(i); ul.appendChild(li);
+    if (it.url) {
+      const a = document.createElement('a'); a.href = it.url; a.download = it.outName; a.textContent = it.status + ' ⤓';
+      a.title = 'Tải tệp này'; a.onclick = e => e.stopPropagation(); st.appendChild(a);
+    } else st.textContent = it.status;
+    li.append(cb, name, st); li.onclick = () => select(i); ul.appendChild(li);
   });
+  updateSel();
+}
+
+function updateSel() {
+  const items = tab().items, n = items.length, k = items.filter(x => x.checked).length;
+  const ca = $('checkAll');
+  ca.checked = n > 0 && k === n; ca.indeterminate = k > 0 && k < n;
+  $('selInfo').textContent = n ? `Đã chọn ${k}/${n}` : '';
+  if (!state.busy) {
+    $('zipSel').disabled = !items.some(x => x.checked && x.blob);
+    $('zipAll').disabled = !items.some(x => x.blob);
+  }
+  const what = state.kind === 'image' ? 'ảnh' : 'video';
+  $('start').textContent = n && k < n ? `Xử lý ${k} ${what} đã chọn` : `Bắt đầu xử lý ${what}`;
 }
 function updateCounts() {
   const a = state.tabs.image.items.length, b = state.tabs.video.items.length;
@@ -182,7 +207,6 @@ function switchTab(kind) {
   state.kind = kind;
   document.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b.dataset.kind === kind));
   $('listTitle').textContent = kind === 'image' ? 'Danh sách ảnh' : 'Danh sách video';
-  $('start').textContent = kind === 'image' ? 'Bắt đầu xử lý ảnh' : 'Bắt đầu xử lý video';
   $('vrow').hidden = kind !== 'video';
   $('fmtHint').textContent = kind === 'image'
     ? 'Kéo thả tệp vào trang. Định dạng: PNG, JPG, JPEG, JFIF, WEBP, GIF (khung đầu), BMP.'
@@ -405,15 +429,23 @@ async function encodeImage(img, srcFile, strip) {
 
 $('start').onclick = async () => {
   if (state.busy) return;
-  const t = tab(); if (!t.items.length) { alert('Danh sách đang trống.'); return; }
-  state.busy = true; $('start').disabled = true; $('zipAll').disabled = true;
+  const t = tab();
+  if (!t.items.length) { alert('Danh sách đang trống.'); return; }
+  const jobs = t.items.filter(x => x.checked);
+  if (!jobs.length) { alert('Chưa tích chọn tệp nào. Hãy tích vào ô bên trái tên tệp (hoặc "Chọn tất cả").'); return; }
+  state.busy = true; state.cancel = false;
+  $('start').disabled = true; $('stop').disabled = false; $('zipAll').disabled = true; $('zipSel').disabled = true;
+  document.querySelectorAll('.tab').forEach(b => (b.disabled = true));
   const strip = $('strip').checked, method = $('method').value;
-  log(`— Bắt đầu ${t.items.length} tệp`);
-  let ok = 0, fail = 0;
-  for (let i = 0; i < t.items.length; i++) {
-    const it = t.items[i];
+  log(`— Bắt đầu ${jobs.length} tệp`);
+  for (const it of jobs) { it.status = 'Chờ xử lý'; it.cls = ''; }
+  renderList();
+  let ok = 0, fail = 0, stopped = false;
+  for (let i = 0; i < jobs.length; i++) {
+    if (state.cancel) { stopped = true; break; }
+    const it = jobs[i];
     it.status = 'Đang xử lý…'; it.cls = ''; renderList();
-    progress(i / t.items.length, `${i + 1}/${t.items.length}: ${it.rel}`);
+    progress(i / jobs.length, `${i + 1}/${jobs.length}: ${it.rel}`);
     await new Promise(r => setTimeout(r, 10));
     try {
       if (it.manualBox && it.manualBox.rel) {
@@ -421,7 +453,7 @@ $('start').onclick = async () => {
         resolveRel(it);
       }
       const o = { method, mode: it.manualBox ? 'manual' : 'auto', box: it.manualBox };
-      let state_, geo;
+      let geo;
       const base = it.rel.replace(/\.[^.]+$/, '');
       if (it.kind === 'image') {
         const img = it.preview && it.preview.width ? it.preview : await decodeImage(it.file);
@@ -429,6 +461,7 @@ $('start').onclick = async () => {
         if (o.mode === 'auto' && method === 'alpha' && it.geo) res = { img: runImageWithGeo(img, it.geo), geo: it.geo };
         else res = E.processImage(img, o);
         geo = res.geo;
+        if (state.cancel) throw new Error('__cancel__');
         const enc = await encodeImage(res.img, it.file, strip);
         await saveOut(it, enc.blob, `${base}.${enc.ext}`);
         const before = M.scan(enc.orig), after = M.scan(enc.bytes);
@@ -438,37 +471,76 @@ $('start').onclick = async () => {
         const info = await ensureVideo(it);
         geo = await videoGeo(it, o);
         if (!geo.found && o.mode !== 'manual') { log(`• ${it.rel}: không thấy logo, bỏ qua`); it.status = 'Không thấy logo'; it.cls = 'warn'; renderList(); continue; }
-        const data = await V.processVideo(it.ffName, info, geo, { method, strip, onProgress: (f, s) => progress((i + f) / t.items.length, `${i + 1}/${t.items.length}: ${s}`) });
+        const data = await V.processVideo(it.ffName, info, geo, { method, strip, onProgress: (f, s) => progress((i + f) / jobs.length, `${i + 1}/${jobs.length}: ${s}`) });
         await saveOut(it, new Blob([data], { type: 'video/mp4' }), `${base}.mp4`);
         log(`✔ ${it.rel}: ${geo.found ? 'đã gỡ logo' : 'đã vá vùng'} → ${base}.mp4`);
       }
       it.status = geo.found ? 'Đã gỡ logo' : (o.mode === 'manual' ? 'Đã vá vùng' : 'Không thấy logo');
       it.cls = geo.found || o.mode === 'manual' ? 'ok' : 'warn'; ok++;
     } catch (err) {
+      if (state.cancel) { it.status = 'Đã dừng'; it.cls = 'warn'; stopped = true; renderList(); break; }
       console.error(err); it.status = 'Lỗi'; it.cls = 'err'; fail++; log(`✖ ${it.rel}: ${err.message}`);
     }
     renderList();
   }
-  progress(1, `Hoàn tất: ${ok} thành công, ${fail} lỗi${state.outDir ? '' : ' – bấm vào trạng thái để tải từng tệp hoặc tải .zip'}`);
-  log(`— Hoàn tất: ${ok} thành công, ${fail} lỗi`);
-  state.busy = false; $('start').disabled = false; $('zipAll').disabled = !t.items.some(x => x.blob);
+  if (stopped) {
+    progress(0, `Đã ngưng: ${ok} tệp xong trước khi dừng. Bấm "Bắt đầu" để chạy lại từ đầu.`, 'stopped');
+    log(`— Đã ngưng tiến trình (${ok} xong, ${fail} lỗi)`);
+  } else {
+    progress(1, `Hoàn tất: ${ok} thành công, ${fail} lỗi${state.outDir ? '' : ' – bấm vào trạng thái để tải từng tệp, hoặc dùng nút tải bên trên'}`, 'done');
+    log(`— Hoàn tất: ${ok} thành công, ${fail} lỗi`);
+  }
+  state.busy = false; state.cancel = false;
+  $('start').disabled = false; $('stop').disabled = true;
+  document.querySelectorAll('.tab').forEach(b => (b.disabled = false));
+  updateSel();
 };
 
-$('zipAll').onclick = async () => {
-  const items = tab().items.filter(x => x.blob); if (!items.length) return;
+$('stop').onclick = () => {
+  if (!state.busy) return;
+  state.cancel = true;
+  $('stop').disabled = true;
+  progress(0, 'Đang ngưng…', 'stopped');
+  if (V && V.abort && state.kind === 'video') {
+    V.abort();                                   // stops ffmpeg immediately
+    state.tabs.video.items.forEach(x => { x.ffName = null; });  // its virtual files are gone
+  }
+};
+
+async function downloadItems(items, zipName) {
+  if (!items.length) return;
+  if (items.length === 1) {
+    const a = document.createElement('a'); a.href = items[0].url; a.download = items[0].outName; a.click(); return;
+  }
   const zip = new window.JSZip();
   for (const it of items) zip.file(it.outPath, it.blob);
   progress(0, 'Đang nén .zip…');
   const blob = await zip.generateAsync({ type: 'blob' }, m => progress(m.percent / 100, 'Đang nén .zip…'));
-  const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
-  a.download = state.kind === 'image' ? 'AI-Remove-anh.zip' : 'AI-Remove-video.zip'; a.click();
-  progress(1, 'Đã tạo .zip');
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = zipName; a.click();
+  progress(1, `Đã tạo ${zipName} (${items.length} tệp)`, 'done');
+}
+
+$('zipSel').onclick = () => {
+  const items = tab().items.filter(x => x.checked && x.blob);
+  if (!items.length) { alert('Các mục đã chọn chưa có kết quả. Hãy xử lý trước.'); return; }
+  downloadItems(items, state.kind === 'image' ? 'AI-Remove-anh-da-chon.zip' : 'AI-Remove-video-da-chon.zip');
+};
+
+$('zipAll').onclick = () => {
+  const items = tab().items.filter(x => x.blob);
+  downloadItems(items, state.kind === 'image' ? 'AI-Remove-anh.zip' : 'AI-Remove-video.zip');
+};
+
+$('checkAll').onchange = () => {
+  const v = $('checkAll').checked;
+  tab().items.forEach(x => { x.checked = v; });
+  renderList();
 };
 
 // ---------------------------------------------------------------------------
 $('pickFiles').onchange = e => { addFiles([...e.target.files]); e.target.value = ''; };
 $('pickDir').onchange = e => { addFiles([...e.target.files]); e.target.value = ''; };
-$('clear').onclick = () => { const t = tab(); t.items.forEach(it => it.url && URL.revokeObjectURL(it.url)); t.items = []; t.cur = null; renderList(); updateCounts(); view.setImage(null); view.box = null; setDetect(''); };
+$('clear').onclick = () => { if (state.busy) return; const t = tab(); t.items.forEach(it => it.url && URL.revokeObjectURL(it.url)); t.items = []; t.cur = null; renderList(); updateCounts(); view.setImage(null); view.box = null; setDetect(''); };
 document.querySelectorAll('.tab').forEach(b => b.onclick = () => switchTab(b.dataset.kind));
 document.addEventListener('dragover', e => e.preventDefault());
 document.addEventListener('drop', async e => {

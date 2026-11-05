@@ -73,6 +73,11 @@ web/                      bản web (JavaScript + ffmpeg.wasm)
 packaging/windows/        launcher .exe, kịch bản NSIS, script build
 ```
 
+## Lịch sử phiên bản
+
+- **1.1.0**: sửa lỗi build bộ cài trên GitHub Actions (đường dẫn `dist` tương đối); giao diện mới: tab Ảnh/Video nổi bật, nút to hơn và có màu, thanh trạng thái lớn hơn, cột danh sách rộng hơn; thêm cột tích chọn (chỉ xử lý/tải các mục đã chọn), nút "Tải các mục đã chọn" và "Ngưng tiến trình" (bản web; bản Windows có cột tích chọn và nút "Ngưng tiến trình"); sửa lỗi thanh chọn khung hình video hiện cả ở tab Ảnh trên bản web.
+- **1.0.0**: phát hành đầu tiên.
+
 ## Bản quyền
 
 MIT. Bản đồ alpha của logo Gemini lấy từ GeminiWatermarkTool (© 2024 AllenK) và gemini-watermark-remover (© 2025 Jad), giấy phép MIT. Xem `LICENSE`.

@@ -31,6 +31,10 @@
       <label class="btn">Chọn thư mục…<input type="file" id="pickDir" webkitdirectory multiple hidden></label>
       <button class="btn" id="clear">Xóa</button>
     </div>
+    <div class="listhead">
+      <label class="chkall"><input type="checkbox" id="checkAll" checked> Chọn tất cả</label>
+      <span id="selInfo" class="selinfo"></span>
+    </div>
     <ul id="list" class="list"></ul>
     <p class="hint" id="fmtHint">Kéo thả tệp vào trang. Định dạng: PNG, JPG, JPEG, JFIF, WEBP, GIF (khung đầu), BMP.</p>
     <h2>Nhật ký</h2>
@@ -44,8 +48,8 @@
         <div class="seg">
           <button id="vBefore" class="on">Ảnh gốc</button><button id="vAfter">Sau khi xử lý</button>
         </div>
-        <button class="btn sm" id="zoomBox">Phóng vùng logo</button>
-        <button class="btn sm" id="fitView">Vừa khung</button>
+        <button class="btn tool" id="zoomBox">Phóng vùng logo</button>
+        <button class="btn tool" id="fitView">Vừa khung</button>
       </div>
       <div class="stage" id="stage"><canvas id="cv"></canvas><div class="empty" id="empty">Chọn tệp để xem trước</div></div>
       <div class="vrow" id="vrow" hidden>
@@ -74,11 +78,13 @@
 
 <footer class="bar card">
   <label class="chk"><input type="checkbox" id="strip" checked> Gỡ metadata ẩn (EXIF, XMP, IPTC, C2PA, thông tin AI)</label>
-  <button class="btn" id="pickOut">Chọn thư mục lưu…</button>
-  <span id="outName" class="hint"></span>
-  <button class="btn primary" id="start">Bắt đầu xử lý ảnh</button>
-  <button class="btn" id="zipAll" disabled>Tải tất cả (.zip)</button>
-  <div class="prog"><div id="progBar"></div><span id="progText">Sẵn sàng</span></div>
+  <button class="btn big folder" id="pickOut">Chọn thư mục lưu…</button>
+  <span id="outName" class="outname"></span>
+  <button class="btn big primary" id="start">Bắt đầu xử lý ảnh</button>
+  <button class="btn big danger" id="stop" disabled>Ngưng tiến trình</button>
+  <button class="btn big dlsel" id="zipSel" disabled>Tải các mục đã chọn</button>
+  <button class="btn big dlall" id="zipAll" disabled>Tải tất cả (.zip)</button>
+  <div class="prog" id="prog"><div class="fill" id="progBar"><span id="progText2"></span></div><span id="progText">Sẵn sàng</span></div>
 </footer>
 
 <script src="vendor/jszip.min.js"></script>

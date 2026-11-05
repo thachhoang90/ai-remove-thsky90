@@ -460,6 +460,17 @@ class MediaTab(QWidget):
         self.chk_sub = QCheckBox("Quét cả thư mục con")
         self.chk_sub.setChecked(True)
         ll.addWidget(self.chk_sub)
+        selrow = QHBoxLayout()
+        self.chk_all = QCheckBox("Chọn tất cả")
+        self.chk_all.setTristate(False)
+        self.chk_all.setChecked(True)
+        self.chk_all.clicked.connect(self._check_all)
+        self.lbl_sel = QLabel("")
+        self.lbl_sel.setObjectName("Hint")
+        selrow.addWidget(self.chk_all)
+        selrow.addStretch(1)
+        selrow.addWidget(self.lbl_sel)
+        ll.addLayout(selrow)
         self.tree = QTreeWidget()
         self.tree.setHeaderLabels(["Tên tệp", "Trạng thái"])
         self.tree.setRootIsDecorated(False)
@@ -468,6 +479,7 @@ class MediaTab(QWidget):
         self.tree.header().setSectionResizeMode(0, QHeaderView.Stretch)
         self.tree.header().setSectionResizeMode(1, QHeaderView.ResizeToContents)
         self.tree.currentItemChanged.connect(self._on_select)
+        self.tree.itemChanged.connect(lambda *_: self._update_sel())
         ll.addWidget(self.tree, 1)
         hint = QLabel("Mẹo: kéo thả tệp hoặc thư mục vào cửa sổ.\n"
                       + ("Định dạng: PNG, JPG, JPEG, JFIF, HEIC, HEIF, GIF, WEBP" if is_img else
@@ -495,10 +507,12 @@ class MediaTab(QWidget):
         top.addWidget(t2)
         top.addStretch(1)
         self.btn_before = QToolButton()
+        self.btn_before.setObjectName("Seg")
         self.btn_before.setText("Ảnh gốc")
         self.btn_before.setCheckable(True)
         self.btn_before.setChecked(True)
         self.btn_after = QToolButton()
+        self.btn_after.setObjectName("Seg")
         self.btn_after.setText("Sau khi xử lý")
         self.btn_after.setCheckable(True)
         grp = QButtonGroup(self)
@@ -507,9 +521,11 @@ class MediaTab(QWidget):
         grp.addButton(self.btn_after)
         self.btn_after.toggled.connect(self._toggle_after)
         bz = QToolButton()
+        bz.setObjectName("Tool")
         bz.setText("Phóng vùng logo")
         bz.clicked.connect(lambda: self.canvas.zoom_to_box())
         bf = QToolButton()
+        bf.setObjectName("Tool")
         bf.setText("Vừa khung")
         bf.clicked.connect(lambda: self.canvas.fit())
         for b in (self.btn_before, self.btn_after, bz, bf):
@@ -598,7 +614,7 @@ class MediaTab(QWidget):
         split.addWidget(right)
         split.setStretchFactor(0, 1)
         split.setStretchFactor(1, 3)
-        split.setSizes([300, 900])
+        split.setSizes([420, 820])
         self._on_mode()
 
     # ---- list management --------------------------------------------------
@@ -630,6 +646,8 @@ class MediaTab(QWidget):
             it = Item(f, base)
             w = QTreeWidgetItem([os.path.relpath(f, base) if base else os.path.basename(f), it.status])
             w.setToolTip(0, f)
+            w.setFlags(w.flags() | Qt.ItemIsUserCheckable)
+            w.setCheckState(0, Qt.Checked)
             it.tree = w
             self.tree.addTopLevelItem(w)
             self.items.append(it)
@@ -638,6 +656,30 @@ class MediaTab(QWidget):
             self.tree.setCurrentItem(self.items[0].tree)
         self.status.emit(f"Đã thêm {added} tệp" if added else "Không có tệp mới phù hợp")
         self.main.update_counts()
+        self._update_sel()
+
+    def _checked(self, it: Item) -> bool:
+        return it.tree is None or it.tree.checkState(0) == Qt.Checked
+
+    def _check_all(self, on):
+        self.tree.blockSignals(True)
+        for it in self.items:
+            if it.tree is not None:
+                it.tree.setCheckState(0, Qt.Checked if on else Qt.Unchecked)
+        self.tree.blockSignals(False)
+        self._update_sel()
+
+    def _update_sel(self):
+        n = len(self.items)
+        k = sum(1 for it in self.items if self._checked(it))
+        self.chk_all.blockSignals(True)
+        self.chk_all.setChecked(n > 0 and k == n)
+        self.chk_all.blockSignals(False)
+        self.lbl_sel.setText(f"Đã chọn {k}/{n}" if n else "")
+        self.main.refresh_start_label()
+
+    def selected_count(self):
+        return sum(1 for it in self.items if self._checked(it))
 
     def clear(self):
         self.items.clear()
@@ -647,6 +689,7 @@ class MediaTab(QWidget):
         self.canvas.set_box(None)
         self.lbl_detect.setText("")
         self.main.update_counts()
+        self._update_sel()
 
     def set_item_status(self, idx, text, out=""):
         it = self.items[idx]
@@ -997,6 +1040,8 @@ class MediaTab(QWidget):
     def jobs(self):
         out = []
         for i, it in enumerate(self.items):
+            if not self._checked(it):
+                continue
             mb = it.manual_box
             if mb and mb[0] == "rel":
                 if it.size is None:
@@ -1082,9 +1127,11 @@ class MainWindow(QMainWindow):
         self.ed_out.setPlaceholderText("Chọn thư mục để lưu ảnh/video đã xử lý")
         bl.addWidget(self.ed_out, 0, 1, 1, 3)
         bo = QPushButton("Chọn thư mục đích…")
+        bo.setObjectName("Folder")
         bo.clicked.connect(self.pick_out)
         bl.addWidget(bo, 0, 4)
         self.btn_open = QPushButton("Mở thư mục kết quả")
+        self.btn_open.setObjectName("Open")
         self.btn_open.clicked.connect(self.open_out)
         bl.addWidget(self.btn_open, 0, 5)
 
@@ -1101,12 +1148,14 @@ class MainWindow(QMainWindow):
         self.btn_start.setObjectName("Primary")
         self.btn_start.setMinimumHeight(40)
         self.btn_start.clicked.connect(self.start)
-        self.btn_stop = QPushButton("Dừng")
+        self.btn_stop = QPushButton("Ngưng tiến trình")
+        self.btn_stop.setObjectName("Danger")
+        self.btn_stop.setMinimumHeight(40)
         self.btn_stop.setEnabled(False)
         self.btn_stop.clicked.connect(self.stop)
         sl = QHBoxLayout()
         sl.addWidget(self.btn_start, 3)
-        sl.addWidget(self.btn_stop, 1)
+        sl.addWidget(self.btn_stop, 2)
         bl.addLayout(sl, 1, 5, 1, 1)
 
         self.prog_all = QProgressBar()
@@ -1133,7 +1182,15 @@ class MainWindow(QMainWindow):
         self.tabs.setTabText(1, f"  Video ({nv})  " if nv else "  Video  ")
 
     def _on_tab(self, i):
-        self.btn_start.setText("Bắt đầu xử lý ảnh" if i == 0 else "Bắt đầu xử lý video")
+        self.refresh_start_label()
+
+    def refresh_start_label(self):
+        if not hasattr(self, "btn_start") or not hasattr(self, "tabs"):
+            return
+        tab = self.tabs.currentWidget()
+        what = "ảnh" if tab.kind == "image" else "video"
+        n, k = len(tab.items), tab.selected_count()
+        self.btn_start.setText(f"Xử lý {k} {what} đã chọn" if n and k < n else f"Bắt đầu xử lý {what}")
 
     def pick_out(self):
         d = QFileDialog.getExistingDirectory(self, "Chọn thư mục đích", self.ed_out.text())
@@ -1185,6 +1242,9 @@ class MainWindow(QMainWindow):
         self.settings.setValue("strip_meta", self.chk_meta.isChecked())
         self.settings.setValue("force_mp4", bool(self.cmb_vfmt.currentData()))
         jobs = tab.jobs()
+        if not jobs:
+            QMessageBox.information(self, APP_NAME, "Chưa tích chọn tệp nào. Hãy tích vào ô cạnh tên tệp (hoặc 'Chọn tất cả').")
+            return
         self.prog_all.setFormat("Tổng: %v/%m tệp")
         self.prog_all.setRange(0, len(jobs))
         self.prog_all.setValue(0)
@@ -1246,31 +1306,42 @@ QWidget { font-size: 10pt; }
 #Header { background: qlineargradient(x1:0,y1:0,x2:1,y2:0, stop:0 #1E1B4B, stop:1 #312E81); }
 #AppTitle { color: white; font-size: 17pt; font-weight: 700; }
 #AppSub { color: #C7D2FE; }
-#SectionTitle { font-weight: 700; font-size: 11pt; color: #111827; padding: 2px 0 4px 0; }
-#Hint { color: #6B7280; font-size: 9pt; }
-#DetectLabel { font-weight: 600; padding: 4px 2px; }
+#SectionTitle { font-weight: 700; font-size: 11.5pt; color: #111827; padding: 2px 0 4px 0; }
+#Hint { color: #6B7280; font-size: 9.5pt; }
+#DetectLabel { font-weight: 600; padding: 4px 2px; font-size: 10.5pt; }
 #Card { background: #FFFFFF; border: 1px solid #E5E7EB; border-radius: 10px; }
 #Bottom { background: #FFFFFF; border-top: 1px solid #E5E7EB; }
-QMainWindow, QTabWidget::pane { background: #F5F6FA; }
-QTabWidget::pane { border: none; }
-QTabBar::tab { padding: 9px 22px; margin: 6px 2px 0 2px; border-top-left-radius: 8px;
-  border-top-right-radius: 8px; background: #E5E7EB; color: #374151; font-weight: 600; }
-QTabBar::tab:selected { background: #F5F6FA; color: %(accent)s; }
-QPushButton, QToolButton { padding: 6px 12px; border: 1px solid #D1D5DB; border-radius: 7px;
-  background: #FFFFFF; color: #111827; }
+QMainWindow, QTabWidget::pane { background: #F3F4F8; }
+QTabWidget::pane { border: none; border-top: 3px solid %(accent)s; }
+QTabBar::tab { padding: 10px 30px; margin: 8px 4px 0 4px; border-top-left-radius: 10px;
+  border-top-right-radius: 10px; background: #EEF2FF; color: %(accent)s; font-weight: 700;
+  font-size: 12.5pt; border: 1px solid #C7D2FE; border-bottom: none; }
+QTabBar::tab:hover { background: #E0E7FF; }
+QTabBar::tab:selected { background: %(accent)s; color: white; border-color: %(accent)s; }
+QPushButton, QToolButton { padding: 7px 14px; border: 1px solid #D1D5DB; border-radius: 8px;
+  background: #FFFFFF; color: #111827; font-size: 10.5pt; font-weight: 600; }
 QPushButton:hover, QToolButton:hover { border-color: %(accent)s; }
-QPushButton:disabled { color: #9CA3AF; background: #F3F4F6; }
-QToolButton:checked { background: %(accent)s; color: white; border-color: %(accent)s; }
-QPushButton#Primary { background: %(accent)s; color: white; border: none; font-weight: 700;
-  font-size: 11pt; }
+QPushButton:disabled, QToolButton:disabled { color: #9CA3AF; background: #F3F4F6; border-color: #E5E7EB; }
+QToolButton#Seg { background: #EEF2FF; color: %(accent)s; border-color: #C7D2FE; font-size: 11pt; }
+QToolButton#Seg:checked { background: %(accent)s; color: white; border-color: %(accent)s; }
+QToolButton#Tool, QPushButton#Folder { background: #E0F2FE; color: #0369A1; border-color: #BAE6FD; font-size: 11pt; }
+QToolButton#Tool:hover, QPushButton#Folder:hover { background: #BAE6FD; }
+QPushButton#Open { background: #ECFDF5; color: #047857; border-color: #A7F3D0; font-size: 11pt; }
+QPushButton#Open:hover { background: #D1FAE5; }
+QPushButton#Primary { background: %(accent)s; color: white; border: none; font-weight: 700; font-size: 12pt; }
 QPushButton#Primary:hover { background: #4338CA; }
-QPushButton#Primary:disabled { background: #A5B4FC; }
+QPushButton#Primary:disabled { background: #A5B4FC; color: #EEF2FF; }
+QPushButton#Danger { background: #DC2626; color: white; border: none; font-weight: 700; font-size: 12pt; }
+QPushButton#Danger:hover { background: #B91C1C; }
+QPushButton#Danger:disabled { background: #FCA5A5; color: #FEF2F2; }
 QPushButton#Secondary { background: #EEF2FF; color: %(accent)s; border-color: #C7D2FE; font-weight: 600; }
+QTreeWidget { font-size: 10.5pt; }
+QTreeWidget::item { padding: 3px 0; }
 QTreeWidget, QPlainTextEdit, QLineEdit, QComboBox, QDoubleSpinBox { border: 1px solid #D1D5DB;
   border-radius: 7px; background: white; padding: 3px; }
-QProgressBar { border: 1px solid #D1D5DB; border-radius: 7px; text-align: center; background: #F9FAFB;
-  min-height: 20px; }
-QProgressBar::chunk { background: %(accent)s; border-radius: 6px; }
+QProgressBar { border: 1px solid #D1D5DB; border-radius: 8px; text-align: center; background: #F9FAFB;
+  min-height: 28px; font-size: 11pt; font-weight: 600; }
+QProgressBar::chunk { background: %(accent)s; border-radius: 7px; }
 """ % {"accent": ACCENT}
 
 

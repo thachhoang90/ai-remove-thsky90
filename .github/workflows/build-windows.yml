@@ -15,14 +15,14 @@ jobs:
   build:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install build tools
         run: |
           sudo apt-get update
           sudo apt-get install -y nsis gcc-mingw-w64-x86-64 zip unzip
       - name: Build bundle + installer
         run: bash packaging/windows/build_on_linux.sh "$RUNNER_TEMP/cache" dist
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: AI-Remove-thsky90-windows
           path: |
@@ -30,7 +30,7 @@ jobs:
             dist/*.zip
       - name: Attach files to the release
         if: github.event_name == 'release'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.event.release.tag_name }}
           files: |

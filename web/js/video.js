@@ -18,6 +18,12 @@ export async function getFFmpeg(onStatus) {
   return ff;
 }
 
+/** Stop whatever ffmpeg is doing right now (the worker is terminated). */
+export function abort() {
+  if (ff) { try { ff.terminate(); } catch (_) { /* ignore */ } }
+  ff = null;
+}
+
 async function run(args) {
   logBuf = [];
   const rc = await ff.exec(args);
