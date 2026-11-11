@@ -1,5 +1,7 @@
 // AI Remove - thsky90 — web UI
 import * as E from './engine.js';
+import * as L from './logo.js';
+import { attachScrollbars } from './scrollbars.js';
 import * as M from './meta.js';
 
 const $ = id => document.getElementById(id);
@@ -89,6 +91,9 @@ const view = {
     return null;
   },
 };
+
+// v2.3: thanh trượt ngang + dọc để tới nhanh vùng cần định vị khi đang phóng to
+attachScrollbars($('stage'), view, () => (view.before ? [view.before.width, view.before.height] : null));
 
 function toBitmapCanvas(img) {
   const c = document.createElement('canvas'); c.width = img.width; c.height = img.height;
@@ -276,10 +281,7 @@ async function autoDetect(it, token) {
     setDetect('Đang dò logo Gemini…');
     await new Promise(r => setTimeout(r, 10));
     if (it.kind === 'image') {
-      const g = E.grayFromRGBA(it.preview.data, it.preview.width, it.preview.height);
-      const [score, s, x, y] = E.coarseDetect(g, it.preview.width, it.preview.height);
-      it.geo = (!s || score < 0.3) ? { found: false, x, y, size: s, score }
-        : E.fitGeometry([g], [x, y, s], 255, it.preview.width, it.preview.height, score);
+      it.geo = L.detect(it.preview);               // v2.3: outline-voting detector
     } else {
       it.geo = await V.detect(it.ffName, it.info, { onStatus: t => setDetect(t) });
     }
@@ -357,7 +359,7 @@ async function makePreview() {
     const o = currentOpts(it);
     let out;
     if (it.kind === 'image') {
-      out = (o.mode === 'auto' && o.method === 'alpha' && it.geo) ? runImageWithGeo(it.preview, it.geo) : E.processImage(it.preview, o).img;
+      out = (o.mode === 'auto' && o.method === 'alpha' && it.geo) ? runImageWithGeo(it.preview, it.geo) : L.processImage(it.preview, o).img;
     } else {
       const geo = await videoGeo(it, o);
       const tt = Math.min(it.info.duration * ($('seek').value / 1000), Math.max(0, it.info.duration - 0.1));
@@ -369,8 +371,7 @@ async function makePreview() {
 }
 
 function runImageWithGeo(img, geo) {
-  if (!geo.found) return { width: img.width, height: img.height, data: new Uint8ClampedArray(img.data) };
-  return E.processImage(img, { mode: 'manual', box: [geo.x, geo.y, geo.size], method: 'alpha' }).img;
+  return L.applyGeometry(img, geo, { mode: 'auto', method: 'alpha' });
 }
 
 async function videoGeo(it, o) {
@@ -389,9 +390,7 @@ $('snap').onclick = async () => {
   await new Promise(r => setTimeout(r, 10));
   let g;
   if (it.kind === 'image') {
-    const gr = E.grayFromRGBA(it.preview.data, it.preview.width, it.preview.height);
-    const [score, s, x, y] = E.coarseDetect(gr, it.preview.width, it.preview.height, it.manualBox);
-    g = s ? E.fitGeometry([gr], [x, y, s], 255, it.preview.width, it.preview.height, score) : { found: false };
+    g = L.detect(it.preview, it.manualBox);
   } else g = await V.detect(it.ffName, it.info, { manualBox: it.manualBox, onStatus: t => setDetect(t) });
   if (g.found) { it.manualBox = [g.x, g.y, g.size]; showBox(it.manualBox, true); setDetect(`Đã khớp: (${g.x.toFixed(2)}, ${g.y.toFixed(2)}), cỡ ${g.size.toFixed(2)} px.`, 'ok'); }
   else setDetect('Không khớp được ngôi sao trong khung – khi xử lý sẽ vá vùng theo đúng khung này.', 'warn');
@@ -469,7 +468,7 @@ $('start').onclick = async () => {
         const img = it.preview && it.preview.width ? it.preview : await decodeImage(it.file);
         let res;
         if (o.mode === 'auto' && method === 'alpha' && it.geo) res = { img: runImageWithGeo(img, it.geo), geo: it.geo };
-        else res = E.processImage(img, o);
+        else res = L.processImage(img, o);
         geo = res.geo;
         if (state.cancel) throw new Error('__cancel__');
         const enc = await encodeImage(res.img, it.file, strip);

@@ -1,5 +1,7 @@
 // AI Remove - thsky90 — browser port of airemove/engine.py
 // Reverse alpha blending of the Gemini sparkle with sub-pixel geometry fit.
+// Since v2.3 still images are detected and restored by logo.js (outline
+// voting); this module keeps the shared helpers and the video pipeline.
 // All arrays are Float32Array in row-major order.
 
 export const SHARP_SIGMA = 0.5;
@@ -45,26 +47,61 @@ function tpl(variant) { return T[variant] || T.v1; }
 // ---------------------------------------------------------------------------
 // Basic image helpers
 // ---------------------------------------------------------------------------
-export function renderAlpha(t, x0, y0, s, bx, by, bw, bh) {
-  const n = t.n, A = t.a, ss = 4;
+/** Sampling weights of one axis: output pixel o = weighted sum of a short run
+ *  of template taps (bilinear interpolation, ss sub-samples, area average). */
+function axisWeights(n, s, b0, len, p0, ss) {
+  const k = n / s, start = new Int32Array(len), count = new Int32Array(len);
+  const span = Math.ceil(k) + 3, wts = new Float32Array(len * span);
+  for (let o = 0; o < len; o++) {
+    const u0 = (b0 + o + 0.5 / ss - p0) * k - 0.5;
+    const first = Math.floor(u0);
+    start[o] = first;
+    const base = o * span;
+    let last = 0;
+    for (let t = 0; t < ss; t++) {
+      const u = u0 + (t / ss) * k, i0 = Math.floor(u), f = u - i0, j = i0 - first;
+      if (j + 1 >= span) continue;
+      wts[base + j] += (1 - f) / ss;
+      wts[base + j + 1] += f / ss;
+      if (j + 2 > last) last = j + 2;
+    }
+    count[o] = last;
+  }
+  return { start, count, wts, span };
+}
+
+/** Render template ``t`` placed at (x0, y0) with size ``s`` onto the pixel grid
+ *  of box (bx, by, bw, bh): bilinear sampling with ss x ss sub-samples per
+ *  pixel, averaged.  The operation is separable, so it runs as two short 1-D
+ *  passes (taps outside the template count as 0). */
+export function renderAlpha(t, x0, y0, s, bx, by, bw, bh, ss = 4) {
+  const n = t.n, A = t.a;
+  const wx = axisWeights(n, s, bx, bw, x0, ss), wy = axisWeights(n, s, by, bh, y0, ss);
+  // template rows that are needed at all
+  let r0 = n, r1 = -1;
+  for (let o = 0; o < bh; o++) {
+    if (!wy.count[o]) continue;
+    r0 = Math.min(r0, wy.start[o]); r1 = Math.max(r1, wy.start[o] + wy.count[o] - 1);
+  }
+  r0 = Math.max(0, r0); r1 = Math.min(n - 1, r1);
   const out = new Float32Array(bw * bh);
-  const k = n / s;
-  const samp = (i, j) => (i >= 0 && j >= 0 && i < n && j < n) ? A[j * n + i] : 0;
+  if (r1 < r0) return out;
+  const rows = r1 - r0 + 1, tmp = new Float32Array(rows * bw);
+  for (let ox = 0; ox < bw; ox++) {
+    const st = wx.start[ox], cnt = wx.count[ox], base = ox * wx.span;
+    for (let j = 0; j < cnt; j++) {
+      const i = st + j, w = wx.wts[base + j];
+      if (i < 0 || i >= n || w === 0) continue;
+      for (let r = 0; r < rows; r++) tmp[r * bw + ox] += w * A[(r0 + r) * n + i];
+    }
+  }
   for (let oy = 0; oy < bh; oy++) {
-    for (let ox = 0; ox < bw; ox++) {
-      let acc = 0;
-      for (let sy = 0; sy < ss; sy++) {
-        const v = (by + oy + (sy + 0.5) / ss - y0) * k - 0.5;
-        const j0 = Math.floor(v), fy = v - j0;
-        for (let sx = 0; sx < ss; sx++) {
-          const u = (bx + ox + (sx + 0.5) / ss - x0) * k - 0.5;
-          const i0 = Math.floor(u), fx = u - i0;
-          if (i0 < -1 || j0 < -1 || i0 >= n || j0 >= n) continue;
-          acc += (samp(i0, j0) * (1 - fx) + samp(i0 + 1, j0) * fx) * (1 - fy)
-               + (samp(i0, j0 + 1) * (1 - fx) + samp(i0 + 1, j0 + 1) * fx) * fy;
-        }
-      }
-      out[oy * bw + ox] = acc / (ss * ss);
+    const st = wy.start[oy], cnt = wy.count[oy], base = oy * wy.span, row = oy * bw;
+    for (let j = 0; j < cnt; j++) {
+      const r = st + j - r0, w = wy.wts[base + j];
+      if (r < 0 || r >= rows || w === 0) continue;
+      const tr = r * bw;
+      for (let ox = 0; ox < bw; ox++) out[row + ox] += w * tmp[tr + ox];
     }
   }
   return out;
@@ -164,7 +201,7 @@ function median(arr) {
   return a.length % 2 ? a[m] : 0.5 * (a[m - 1] + a[m]);
 }
 
-function golden(f, lo, hi, iters = 18) {
+export function golden(f, lo, hi, iters = 18) {
   const gr = 0.6180339887;
   let a = lo, b = hi, c = b - gr * (b - a), d = a + gr * (b - a);
   let fc = f(c), fd = f(d);

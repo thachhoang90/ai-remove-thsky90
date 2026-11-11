@@ -453,24 +453,23 @@ class Options:
 
 
 def detect_image(rgb: np.ndarray, opts: Options | None = None) -> Geometry:
+    """Find the sparkle on a still image.
+
+    Since v2.3 this is the outline-voting detector of ``airemove.detect``: it
+    looks at the brightness step a semi-transparent white overlay must cause
+    all around its outline, so it also works when the logo sits on text, a
+    face or busy artwork.  (Videos keep using coarse_detect + fit_geometry on
+    time-averaged frames, see video.py.)"""
+    from . import detect as D
     opts = opts or Options()
-    H, W = rgb.shape[:2]
-    gray = to_gray(rgb)
     prior = None
     if opts.mode == "manual" and opts.manual_box:
         bx, by, bw, bh = opts.manual_box
         s = float(min(bw, bh))
         prior = (bx + (bw - s) / 2, by + (bh - s) / 2, s)
-    score, s, x, y = coarse_detect(gray, prior=prior)
-    if s == 0:
-        if prior:
-            return Geometry(prior[0], prior[1], prior[2], found=False, note="manual-no-match")
-        return Geometry(0, 0, 0, note="not-found")
-    if prior is None and score < opts.min_score:
-        return Geometry(x, y, s, score=float(score), found=False, note="low-score")
-    geo = fit_geometry([rgb.astype(np.float32)], (x, y, s), 255.0, W, H, score)
+    geo = D.detect(rgb, prior)
     if prior is not None and not geo.found:
-        # manual box but the sparkle could not be fitted -> keep user's box
+        # no sparkle inside the user's box -> the box itself will be filled in
         geo.x, geo.y, geo.size = prior
         geo.note = "manual-inpaint"
     return geo
@@ -691,6 +690,25 @@ def quality_guard(src: np.ndarray, out: np.ndarray, geo: Geometry, limit: float 
     return out
 
 
+def apply_image(rgb: np.ndarray, geo: Geometry | None, opts: Options | None = None) -> np.ndarray:
+    """Remove the logo of a still image whose geometry is already known.
+
+    * sparkle found          -> exact reverse blend (airemove.restore.remove):
+                                the artwork under the logo is recovered, not painted
+    * manual box, no sparkle -> the box is filled in from its surroundings
+    * method "inpaint"       -> always fill in (box in manual mode, star shape otherwise)"""
+    from . import restore as R
+    opts = opts or Options()
+    manual = opts.mode == "manual" and bool(opts.manual_box)
+    if geo is not None and geo.found and opts.method != "inpaint":
+        return R.remove(rgb, geo, opts.seam)
+    if manual:
+        return R.inpaint(rgb, R.box_mask(rgb.shape, opts.manual_box))
+    if geo is not None and geo.found:
+        return R.inpaint(rgb, R.star_mask(rgb.shape, geo))
+    return rgb.copy()
+
+
 def process_image(rgb: np.ndarray, opts: Options | None = None):
     """Detect and remove. Returns (result_rgb, geometry)."""
     opts = opts or Options()
@@ -698,13 +716,6 @@ def process_image(rgb: np.ndarray, opts: Options | None = None):
         bx, by, bw, bh = opts.manual_box
         s = float(min(bw, bh))
         geo = Geometry(bx + (bw - s) / 2, by + (bh - s) / 2, s, found=False, note="manual-inpaint")
-        return remove_with_geometry(rgb, geo, method="inpaint"), geo
+        return apply_image(rgb, geo, opts), geo
     geo = detect_image(rgb, opts)
-    if geo.found:
-        out = remove_with_geometry(rgb, geo, 255.0, opts.seam, "alpha")
-        if opts.extra.get("guard", True):
-            out = quality_guard(rgb, out, geo)
-        return out, geo
-    if opts.mode == "manual" and opts.manual_box:
-        return remove_with_geometry(rgb, geo, method="inpaint"), geo
-    return rgb.copy(), geo
+    return apply_image(rgb, geo, opts), geo

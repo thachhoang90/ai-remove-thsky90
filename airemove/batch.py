@@ -84,12 +84,7 @@ def process_image_file(src: str, dst: str, opts: E.Options | None = None,
 
 
 def apply_geometry(rgb: np.ndarray, geo: E.Geometry, opts: E.Options):
-    if geo.found and opts.method != "inpaint":
-        out = E.remove_with_geometry(rgb, geo, 255.0, opts.seam, "alpha")
-        return E.quality_guard(rgb, out, geo) if opts.extra.get("guard", True) else out
-    if opts.mode == "manual" and opts.manual_box:
-        return E.remove_with_geometry(rgb, geo, method="inpaint")
-    return rgb.copy()
+    return E.apply_image(rgb, geo, opts)
 
 
 def process_video_file(src, dst, opts=None, strip_metadata=True, progress=None,

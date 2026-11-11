@@ -24,6 +24,7 @@ from . import batch
 from . import engine as E
 from . import imagefile as IF
 from . import video as V
+from .scrollview import ScrollFrame
 
 APP_NAME = "AI Remove - thsky90"
 ACCENT = "#4F46E5"
@@ -534,7 +535,9 @@ class MediaTab(QWidget):
 
         self.canvas = Canvas()
         self.canvas.boxChanged.connect(self._on_box_changed)
-        rl.addWidget(self.canvas, 1)
+        # v2.3: thanh trượt ngang + dọc để tới nhanh vùng cần định vị khi phóng to
+        self.canvas_frame = ScrollFrame(self.canvas, self.canvas.image_size)
+        rl.addWidget(self.canvas_frame, 1)
 
         if not is_img:
             vrow = QHBoxLayout()
@@ -606,7 +609,8 @@ class MediaTab(QWidget):
         row2.addWidget(self.btn_prev)
         g.addLayout(row2, 2, 0, 1, 6)
         tip = QLabel("Thủ công: kéo khung xanh vào đúng ngôi sao, kéo góc để đổi cỡ; phím mũi tên dịch 1 px "
-                     "(Shift: 0,25 px); con lăn chuột để phóng to; chuột phải để kéo ảnh.")
+                     "(Shift: 0,25 px); con lăn chuột để phóng to; chuột phải để kéo ảnh; khi đang phóng to, "
+                     "dùng thanh trượt ngang/dọc quanh khung để tới nhanh vùng cần định vị.")
         tip.setObjectName("Hint")
         tip.setWordWrap(True)
         g.addWidget(tip, 3, 0, 1, 6)
@@ -988,10 +992,7 @@ class MediaTab(QWidget):
             def job(path=it.path, opts=opts, g=geo_cached):
                 rgb = IF.load(path).rgb
                 if g is not None:
-                    out = batch.apply_geometry(rgb, g, opts)
-                    if g.found:
-                        out = E.quality_guard(rgb, out, g)
-                    return out, g
+                    return batch.apply_geometry(rgb, g, opts), g
                 return E.process_image(rgb, opts)
         else:
             t = self.preview_t

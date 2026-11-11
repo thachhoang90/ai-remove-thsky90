@@ -10,6 +10,7 @@
 // "Áp dụng" mới tính trên ảnh độ phân giải đầy đủ và đẩy vào lịch sử.
 // =============================================================================
 import * as O from './ops.js';
+import { attachScrollbars } from '../scrollbars.js';
 
 const $ = id => document.getElementById(id);
 const PREVIEW_MAX = 1200;
@@ -156,6 +157,9 @@ function paintStroke(x0, y0, x1, y1, erase) {
 }
 
 V.cv.addEventListener('contextmenu', e => e.preventDefault());
+// v2.3: thanh trượt ngang + dọc quanh khung ảnh (dùng khi phóng to)
+attachScrollbars($('edStage'), V, () => (V.W ? [V.W, V.H] : null));
+
 V.cv.addEventListener('wheel', e => {
   if (!V.img) return; e.preventDefault();
   const r = V.cv.getBoundingClientRect(), px = e.clientX - r.left, py = e.clientY - r.top, [ix, iy] = V.toImg(px, py);

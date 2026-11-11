@@ -32,6 +32,7 @@ from .. import imagefile as IF
 from . import ops
 from .bulk import BulkWatermarkWorker
 from .canvas import EditorCanvas, np_to_qimage
+from ..scrollview import ScrollFrame
 from .history import History
 from .social_preview import SocialPreview
 
@@ -224,7 +225,9 @@ class EditorTab(QWidget):
         self.canvas = EditorCanvas()
         self.canvas.maskChanged.connect(self._update_buttons)
         self.social = SocialPreview()
-        self.stack.addWidget(self.canvas)
+        # v2.3: thanh trượt ngang + dọc quanh khung ảnh (dùng khi phóng to)
+        self.canvas_frame = ScrollFrame(self.canvas, lambda: self.canvas.logical)
+        self.stack.addWidget(self.canvas_frame)
         self.stack.addWidget(self.social)
         body.addWidget(self.stack, 1)
 
