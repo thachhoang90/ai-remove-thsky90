@@ -235,3 +235,5 @@ body.editing .main, body.editing .bar { display: none !important; }
 .ctl.wm b { display: inline-block; min-width: 38px; font-weight: 600; }
 .wmname { color: #475569; font-size: 13px; }
 #logoBtn.on { background: #ECFDF5; color: #047857; border-color: #A7F3D0; }
+.btn.manall { background: #D97706; color: #fff; border-color: #D97706; }
+.btn.manall:hover:not(:disabled) { background: #B45309; }

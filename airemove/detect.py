@@ -42,8 +42,9 @@ import numpy as np
 
 from . import engine as E
 
-# margin / size of the layouts Gemini uses (48@32, 96@64 -> 2/3; 48@96 -> 2)
-PRIOR_RATIOS = (2.0 / 3.0, 2.0)
+# margin / size of the layouts Gemini uses: 48@32 and 96@64 -> 2/3,
+# 48@72 -> 1.5 (Google Flow and others, found in v3.1), 48@96 -> 2
+PRIOR_RATIOS = (2.0 / 3.0, 1.5, 2.0)
 K_MIN, K_MAX = 0.28, 1.5
 DIRS = ((0, 1), (1, 0), (1, 1), (1, -1))          # (dy, dx) unit steps
 
@@ -591,10 +592,10 @@ def refine(planes, x, y, s, k, W, H, variants=("v1", "n48", "v2"), rounds=3):
             for s0 in (48.0, 96.0):
                 if abs(gs - s0) <= 0.03 * s0:
                     nx, ny = round(W - (ratio + 1) * s0), round(H - (ratio + 1) * s0)
-                    if abs(nx - gx) < 1.0 and abs(ny - gy) < 1.0:
+                    if abs(nx - gx) < 1.5 and abs(ny - gy) < 1.5:
                         for bb in (0.0, p["b"]):
                             cn = prob.cost(var, nx, ny, s0, p["k"], bb)
-                            if cn <= cost * 1.02:
+                            if cn <= cost * 1.03:
                                 gx, gy, gs, cost = float(nx), float(ny), s0, cn
                                 p["b"] = bb
                                 break
@@ -628,9 +629,13 @@ def profile_at(planes, x, y, s, W, H, k):
     return profile_test(sub, A, max(k, 0.05), d)
 
 
-# strength (v1 template) Gemini uses on each layout: 48 px @ 96 px margin -> ~0.58,
-# 48 @ 32 and 96 @ 64 -> ~1.0
-NOMINAL_K = {PRIOR_RATIOS[0]: 1.0, PRIOR_RATIOS[1]: 0.58}
+# strength (v1 template) Gemini uses on each layout: 48 px @ 96 px or 72 px margin
+# -> ~0.58, 48 @ 32 and 96 @ 64 -> ~1.0
+NOMINAL_K = {PRIOR_RATIOS[0]: 1.0, PRIOR_RATIOS[1]: 0.58, PRIOR_RATIOS[2]: 0.58}
+
+
+EV_OK, EV_Z = 6, 6.0       # sectors that must agree (of 8) and minimum z-score (v3.1: 4 real photos
+                           # re-saved at several JPEG qualities 16/16, 200 clean crops of them 0)
 
 
 def _evidence_ok(planes, v: Vote, x, y, s, W, H) -> bool:
@@ -640,10 +645,11 @@ def _evidence_ok(planes, v: Vote, x, y, s, W, H) -> bool:
     equals what Gemini uses on that layout.  Calibrated on ~900 logo-free and
     ~300 logo corners with film grain: no false alarm, all logos accepted."""
     k0 = NOMINAL_K.get(prior_ratio(x, y, s, W, H))
-    if k0 is None or v.inlier < 0.10 or not (0.7 * k0 <= v.k <= 1.3 * k0):
+    # (very small logos have too few pixels per sector for this test)
+    if k0 is None or s < 30.0 or v.inlier < 0.10 or not (0.7 * k0 <= v.k <= 1.3 * k0):
         return False
     ok, n, z = evidence(planes, x, y, s, W, H, k0)
-    if n < 7 or ok < 7 or z < 7.0:
+    if n < 7 or ok < EV_OK or z < EV_Z:
         return False
     r_in, r_out, npf = profile_at(planes, x, y, s, W, H, v.k)
     return not (npf >= 16 and (r_in > 0.25 or abs(r_out) > 0.25))
@@ -657,7 +663,7 @@ def _accept(planes, v: Vote, x, y, s, W, H, on: bool, manual: bool) -> bool:
             return True
         # grainy background inside the user's box: same sector test as on the
         # known layouts, against the two strengths Gemini uses
-        if v.inlier < 0.12:
+        if v.inlier < 0.12 or s < 30.0:
             return False
         k0 = min((0.58, 1.0), key=lambda q: abs(v.k - q))
         if not (0.7 * k0 <= v.k <= 1.3 * k0):
@@ -703,7 +709,7 @@ def detect(rgb: np.ndarray, prior=None) -> E.Geometry:
         cands.append((1.0, float(prior[0]), float(prior[1]), float(prior[2]), False))
     else:
         # files straight from Gemini: always try the exact native placements
-        for sz, mg in ((48.0, 96.0), (48.0, 32.0), (96.0, 64.0)):
+        for sz, mg in ((48.0, 96.0), (48.0, 72.0), (48.0, 32.0), (96.0, 64.0)):
             if W - mg - sz >= roi[0] and H - mg - sz >= roi[1]:
                 cands.append((1.0, W - mg - sz, H - mg - sz, sz, True))
     best = None

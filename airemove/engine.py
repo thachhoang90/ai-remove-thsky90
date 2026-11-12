@@ -718,4 +718,16 @@ def process_image(rgb: np.ndarray, opts: Options | None = None):
         geo = Geometry(bx + (bw - s) / 2, by + (bh - s) / 2, s, found=False, note="manual-inpaint")
         return apply_image(rgb, geo, opts), geo
     geo = detect_image(rgb, opts)
+    # v3.1 "Áp dụng vị trí xóa logo thủ công": pictures of the same size made
+    # by the same tool carry the logo at exactly the same place.  When the
+    # sparkle cannot be confirmed inside the user's box, reuse the geometry
+    # that was fitted on the template picture instead of smearing the box.
+    fb = opts.extra.get("fallback_geo")
+    if fb and tuple(fb[0]) == (rgb.shape[1], rgb.shape[0]):
+        t = Geometry(**fb[1])
+        agrees = (geo.found and abs(geo.x - t.x) <= 2.5 and abs(geo.y - t.y) <= 2.5
+                  and abs(geo.size - t.size) <= 0.05 * t.size)
+        if not agrees:                       # nothing (or something else) found in the box
+            geo = t
+            geo.found, geo.note = True, "template"
     return apply_image(rgb, geo, opts), geo

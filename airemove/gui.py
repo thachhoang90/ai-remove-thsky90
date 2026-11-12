@@ -60,6 +60,7 @@ class Item:
     size: tuple | None = None            # (W, H)
     duration: float = 0.0
     tree: QTreeWidgetItem | None = None
+    template: tuple | None = None        # ((W, H), geometry dict) của ảnh mẫu - v3.1
 
 
 # ==========================================================================
@@ -115,6 +116,8 @@ class BatchWorker(QThread):
             if job.get("manual_box"):
                 opts.mode = "manual"
                 opts.manual_box = job["manual_box"]
+            if job.get("template"):
+                opts.extra["fallback_geo"] = job["template"]
             geo = job.get("geo") if not job.get("manual_box") else None
             if geo is not None and self.method == "inpaint":
                 geo = None
@@ -139,8 +142,8 @@ class BatchWorker(QThread):
                     state = "Đã gỡ logo"
                     detail = (f"vị trí ({geo.x:.0f}, {geo.y:.0f}), cỡ {geo.size:.0f}px, "
                               f"độ mạnh {geo.strength:.2f}")
-                    if geo.note == "inpaint-fallback":
-                        detail += ", vá vùng"
+                    if geo.note == "template":
+                        detail += ", theo vị trí của ảnh mẫu"
                 elif opts.manual_box:
                     state, detail = "Đã vá vùng", "theo khung thủ công"
                 else:
@@ -1077,6 +1080,62 @@ class MediaTab(QWidget):
                 other.tree.setText(1, "Thủ công (theo mẫu)")
         self.status.emit(f"Đã áp dụng khung cho {n} tệp khác")
 
+    def apply_manual_to_undetected(self):
+        """v3.1 - nút "Áp dụng vị trí xóa logo thủ công": lấy khung thủ công của
+        ảnh đang chọn làm mẫu cho MỌI ảnh mà bước dò tự động chưa tìm thấy logo
+        (ảnh đã dò được giữ nguyên chế độ tự động), đồng thời tích chọn chúng.
+
+        Ngôi sao trong khung mẫu được khớp chính xác một lần; ảnh cùng kích
+        thước dùng lại đúng vị trí, cỡ và độ mạnh đó nếu không tự khớp được,
+        nên vẫn khôi phục bằng phép tính ngược thay vì vá vùng."""
+        it = self.current
+        if not it or not it.manual_box or it.manual_box[0] == "rel" or not it.size:
+            QMessageBox.information(self, APP_NAME,
+                                    "Hãy chọn một ảnh trong danh sách, bật \"Định vị thủ công\" và đặt khung "
+                                    "vào đúng logo trước, rồi bấm nút này.")
+            return
+        box = tuple(it.manual_box)
+        W, H = it.size
+        rel = self._to_rel(box[:3], W, H)
+
+        def job(path=it.path, box=box):
+            if self.kind != "image":
+                return None
+            return E.detect_image(IF.load(path).rgb, E.Options(mode="manual", manual_box=box))
+
+        def done(g, it=it):
+            tpl = None
+            if g is not None and g.found:
+                tpl = ((W, H), g.to_dict())
+                it.manual_box = (g.x, g.y, g.size, g.size)
+                if it is self.current:
+                    self._set_box((g.x, g.y, g.size), True)
+            it.template = tpl
+            n = keep = 0
+            self.tree.blockSignals(True)
+            for o in self.items:
+                if o is it:
+                    continue
+                if o.geo is not None and o.geo.found and not o.manual_box:
+                    keep += 1                       # đã dò tự động được: giữ nguyên
+                    continue
+                o.manual_box = ("rel",) + rel
+                o.template = tpl
+                n += 1
+                if o.tree is not None:
+                    o.tree.setCheckState(0, Qt.Checked)
+                    o.tree.setText(1, "Thủ công (theo mẫu)")
+            if it.tree is not None:
+                it.tree.setCheckState(0, Qt.Checked)
+            self.tree.blockSignals(False)
+            self._update_sel()
+            how = ("đã khớp ngôi sao trong khung mẫu – ảnh cùng kích thước dùng đúng vị trí này"
+                   if tpl else "không khớp được ngôi sao trong khung mẫu – các ảnh sẽ được vá vùng theo khung")
+            self.main.log(f"— Áp dụng vị trí thủ công cho {n} tệp chưa dò được logo (đã tích chọn); "
+                          f"{keep} tệp đã dò tự động giữ nguyên; {how}.")
+            self.status.emit(f"Đã áp dụng vị trí thủ công cho {n} tệp")
+        self._run(job, done=done)
+
     # ---- after preview ----------------------------------------------------
     def wm_active(self):
         """(logo RGBA, cài đặt) nếu đang bật chèn logo, ngược lại None."""
@@ -1104,6 +1163,8 @@ class MediaTab(QWidget):
         if box:
             opts.mode = "manual"
             opts.manual_box = box
+            if it.template:
+                opts.extra["fallback_geo"] = it.template
         return opts
 
     def resolve_box(self, it: Item, size=None):
@@ -1197,7 +1258,7 @@ class MediaTab(QWidget):
                     except Exception:
                         it.size = None
                 mb = self.resolve_box(it) if it.size else None
-            out.append((i, {"path": it.path, "base": it.base, "manual_box": mb,
+            out.append((i, {"path": it.path, "base": it.base, "manual_box": mb, "template": it.template if mb else None,
                             "geo": it.geo if it.geo is not None and it.geo.found else None}))
         return out
 
@@ -1307,8 +1368,16 @@ class MainWindow(QMainWindow):
                                  "tệp không thấy logo bị bỏ tích (tệp đã đặt khung thủ công giữ nguyên).")
         self.btn_scan.clicked.connect(self.scan)
         self.scanner = None
+        # v3.1: dùng khung thủ công của ảnh đang chọn cho mọi ảnh chưa dò được logo
+        self.btn_manual_all = QPushButton("Áp dụng vị trí xóa logo thủ công")
+        self.btn_manual_all.setObjectName("ManualAll")
+        self.btn_manual_all.setMinimumHeight(40)
+        self.btn_manual_all.setToolTip("Đặt khung thủ công trên một ảnh rồi bấm nút này: vị trí và kích thước đó được áp dụng "
+                                       "cho mọi ảnh chưa dò tự động được logo (ảnh đã dò được giữ nguyên) và tích chọn chúng.")
+        self.btn_manual_all.clicked.connect(self.apply_manual_all)
         sl.addWidget(self.btn_start, 3)
         sl.addWidget(self.btn_scan, 2)
+        sl.addWidget(self.btn_manual_all, 2)
         sl.addWidget(self.btn_stop, 2)
         bl.addLayout(sl, 1, 5, 1, 1)
 
@@ -1429,6 +1498,12 @@ class MainWindow(QMainWindow):
         self.tabs.tabBar().setEnabled(False)
         self.log(f"— Bắt đầu {len(jobs)} tệp → {out}")
         self.worker.start()
+
+    def apply_manual_all(self):
+        tab = self.tabs.currentWidget()
+        if isinstance(tab, MediaTab):
+            self._tab_running = tab
+            tab.apply_manual_to_undetected()
 
     # ---- v3.0: quét dò tìm logo tự động -----------------------------------
     def scan(self):
@@ -1562,6 +1637,9 @@ QPushButton#Primary:disabled { background: #A5B4FC; color: #EEF2FF; }
 QPushButton#Scan { background: #0891B2; color: white; border: none; font-weight: 700; font-size: 11.5pt; }
 QPushButton#Scan:hover { background: #0E7490; }
 QPushButton#Scan:disabled { background: #A5F3FC; color: #ECFEFF; }
+QPushButton#ManualAll { background: #D97706; color: white; border: none; font-weight: 700; font-size: 11pt; }
+QPushButton#ManualAll:hover { background: #B45309; }
+QPushButton#ManualAll:disabled { background: #FDE68A; color: #FFFBEB; }
 QPushButton#Danger { background: #DC2626; color: white; border: none; font-weight: 700; font-size: 12pt; }
 QPushButton#Danger:hover { background: #B91C1C; }
 QPushButton#Danger:disabled { background: #FCA5A5; color: #FEF2F2; }

@@ -15,7 +15,7 @@
 import { T, renderAlpha, gaussBlur, boxWithMargin, harmonicFill, cornerRoi,
          grayFromRGBA, golden, SHARP_SIGMA } from './engine.js';
 
-const PRIOR_RATIOS = [2 / 3, 2];
+const PRIOR_RATIOS = [2 / 3, 1.5, 2];      // 48@32 & 96@64, 48@72 (Google Flow, v3.1), 48@96
 const K_MIN = 0.28, K_MAX = 1.5;
 const DIRS = [[0, 1], [1, 0], [1, 1], [1, -1]];            // [dy, dx]
 const T_ON_PRIOR = 0.28, T_OFF_PRIOR = 0.60, T_MANUAL = 0.22;
@@ -552,10 +552,10 @@ function refine(planes, W, H, x, y, s, k, variants = ['v1', 'n48', 'v2'], rounds
       for (const s0 of [48, 96]) {
         if (Math.abs(gs - s0) > 0.03 * s0) continue;
         const nx = pyRound(W - (ratio + 1) * s0), ny = pyRound(H - (ratio + 1) * s0);
-        if (Math.abs(nx - gx) >= 1 || Math.abs(ny - gy) >= 1) continue;
+        if (Math.abs(nx - gx) >= 1.5 || Math.abs(ny - gy) >= 1.5) continue;
         for (const bb of [0, p.b]) {
           const cn = prob.cost(v, nx, ny, s0, p.k, bb);
-          if (cn <= cost * 1.02) { gx = nx; gy = ny; gs = s0; cost = cn; p.b = bb; break; }
+          if (cn <= cost * 1.03) { gx = nx; gy = ny; gs = s0; cost = cn; p.b = bb; break; }
         }
       }
     }
@@ -607,9 +607,9 @@ function evidence(planes, W, H, x, y, s, k0) {
 
 function evidenceOk(planes, W, H, v, x, y, s) {
   const k0 = nominalK(priorRatio(x, y, s, W, H));
-  if (k0 === null || v.inlier < 0.10 || v.k < 0.7 * k0 || v.k > 1.3 * k0) return false;
+  if (k0 === null || s < 30 || v.inlier < 0.10 || v.k < 0.7 * k0 || v.k > 1.3 * k0) return false;
   const [ok, n, z] = evidence(planes, W, H, x, y, s, k0);
-  if (n < 7 || ok < 7 || z < 7) return false;
+  if (n < 7 || ok < 6 || z < 6) return false;
   const [rin, rout, np] = profileAt(planes, W, H, x, y, s, v.k);
   return !(np >= 16 && (rin > 0.25 || Math.abs(rout) > 0.25));
 }
@@ -619,7 +619,7 @@ function accept(planes, W, H, v, x, y, s, on, manual) {
   if (manual) {
     if (v.inlier >= T_MANUAL) return true;
     // grainy background inside the user's box: same sector test, against the two strengths Gemini uses
-    if (v.inlier < 0.12) return false;
+    if (v.inlier < 0.12 || s < 30) return false;
     const k0 = Math.abs(v.k - 0.58) <= Math.abs(v.k - 1.0) ? 0.58 : 1.0;
     if (v.k < 0.7 * k0 || v.k > 1.3 * k0) return false;
     const [ok, n, z] = evidence(planes, W, H, x, y, s, k0);
@@ -647,7 +647,7 @@ export function detect(img, prior = null) {
     const roi = cornerRoi(W, H);
     cands = priorScan(planes, W, H, roi, 14, Math.max(60, 0.14 * Math.min(W, H)));
     // files straight from Gemini: always try the exact native placements
-    for (const [sz, mg] of [[48, 96], [48, 32], [96, 64]]) {
+    for (const [sz, mg] of [[48, 96], [48, 72], [48, 32], [96, 64]]) {
       if (W - mg - sz >= roi[0] && H - mg - sz >= roi[1]) cands.push({ x: W - mg - sz, y: H - mg - sz, s: sz });
     }
     // anywhere else in the corner (only logos of 24 px and more are accepted off the known layouts)
@@ -995,7 +995,14 @@ export function processImage(src, opts = {}) {
     const geo = { x: opts.box[0], y: opts.box[1], size: opts.box[2], found: false, note: 'manual-inpaint' };
     return { img: applyGeometry(src, geo, opts), geo };
   }
-  const geo = detect(src, manual ? opts.box : null);
+  let geo = detect(src, manual ? opts.box : null);
+  // v3.1: same-size pictures reuse the geometry fitted on the template picture
+  const fb = opts.fallback;
+  if (fb && fb.size[0] === src.width && fb.size[1] === src.height) {
+    const t = fb.geo;
+    const agrees = geo.found && Math.abs(geo.x - t.x) <= 2.5 && Math.abs(geo.y - t.y) <= 2.5 && Math.abs(geo.size - t.size) <= 0.05 * t.size;
+    if (!agrees) geo = { ...t, found: true, note: 'template' };       // nothing (or something else) found in the box
+  }
   return { img: applyGeometry(src, geo, opts), geo };
 }
 

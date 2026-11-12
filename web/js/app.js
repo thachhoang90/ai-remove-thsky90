@@ -348,7 +348,7 @@ $('method').onchange = () => { view.setAfter(null); setView('before'); };
 
 function currentOpts(it) {
   const o = { method: $('method').value, mode: 'auto' };
-  if (it.manualBox) { o.mode = 'manual'; o.box = it.manualBox; }
+  if (it.manualBox) { o.mode = 'manual'; o.box = it.manualBox; o.fallback = it.template || null; }
   return o;
 }
 
@@ -497,6 +497,28 @@ $('scan').onclick = async () => {
   document.querySelectorAll('.tab').forEach(b => (b.disabled = false));
 };
 
+// v3.1: dùng khung thủ công của ảnh đang chọn cho mọi ảnh chưa dò tự động được logo
+$('manualAll').onclick = async () => {
+  if (state.busy) return;
+  const it = tab().items[tab().cur];
+  if (!it || !Array.isArray(it.manualBox) || !it.size) { alert('Hãy chọn một ảnh, bật "Định vị thủ công" và đặt khung vào đúng logo trước, rồi bấm nút này.'); return; }
+  let tpl = null;
+  if (it.kind === 'image' && it.preview) {
+    const g = L.detect(it.preview, it.manualBox);
+    if (g.found) { tpl = { size: [...it.size], geo: g }; it.manualBox = [g.x, g.y, g.size]; showBox(it.manualBox, true); }
+  }
+  it.template = tpl; it.checked = true;
+  const rel = toRel(it.manualBox, ...it.size);
+  let n = 0, keep = 0;
+  for (const o of tab().items) {
+    if (o === it) continue;
+    if (o.geo && o.geo.found && !o.manualBox) { keep++; continue; }
+    o.manualBox = { rel }; o.template = tpl; o.checked = true; o.status = 'Thủ công (theo mẫu)'; o.cls = ''; n++;
+  }
+  renderList(); updateSel();
+  log(`— Áp dụng vị trí thủ công cho ${n} tệp chưa dò được logo (đã tích chọn); ${keep} tệp đã dò tự động giữ nguyên; ${tpl ? 'đã khớp ngôi sao trong khung mẫu – ảnh cùng kích thước dùng đúng vị trí này' : 'không khớp được ngôi sao trong khung mẫu – các ảnh sẽ được vá vùng theo khung'}.`);
+};
+
 $('start').onclick = async () => {
   if (state.busy) return;
   const t = tab();
@@ -522,7 +544,7 @@ $('start').onclick = async () => {
         if (!it.size) { if (it.kind === 'image') { const im = await decodeImage(it.file); it.size = [im.width, im.height]; } else { const inf = await ensureVideo(it); it.size = [inf.width, inf.height]; } }
         resolveRel(it);
       }
-      const o = { method, mode: it.manualBox ? 'manual' : 'auto', box: it.manualBox };
+      const o = { method, mode: it.manualBox ? 'manual' : 'auto', box: it.manualBox, fallback: it.manualBox ? (it.template || null) : null };
       let geo;
       const base = it.rel.replace(/\.[^.]+$/, '');
       if (it.kind === 'image') {

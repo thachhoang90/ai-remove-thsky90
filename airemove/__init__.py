@@ -1,2 +1,2 @@
 """AI Remove - thsky90: remove the Gemini sparkle watermark from images and videos."""
-__version__ = "3.0.1"
+__version__ = "3.1.1"
