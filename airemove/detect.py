@@ -200,6 +200,69 @@ def profile_test(planes, A: np.ndarray, k: float, d: int, white: float = 255.0):
     return _wmedian(rin, wts), _wmedian(rout, wts), len(rin)
 
 
+def sector_stats(planes, A: np.ndarray, d: int, center, n_sec: int = 8, white: float = 255.0):
+    """Strength estimate (weighted median) in ``n_sec`` angular sectors around
+    the logo centre.
+
+    On grainy photographic backgrounds (sand, grass, wood, fabric) single pixel
+    pairs are far too noisy to agree with each other, so the inlier ratio of
+    ``vote`` stays low although the logo is there.  What a real logo still
+    does is lift the picture by the SAME share all the way round its outline:
+    the medians of the sectors agree with each other, while texture, shading
+    and edges of the artwork give medians that scatter around zero.
+
+    Returns an array of n_sec medians (NaN where a sector has too few pairs)."""
+    am = float(A.max())
+    h, w = A.shape
+    meds = np.full(n_sec, np.nan, np.float32)
+    if am <= 1e-6:
+        return meds
+    yy, xx = np.mgrid[0:h, 0:w]
+    ang = np.arctan2(yy - center[1], xx - center[0])
+    sec_map = (np.floor((ang + np.pi) / (2 * np.pi) * n_sec).astype(np.int32)) % n_sec
+    ks, ws, ss = [], [], []
+    den_min = 0.5 * am * 10.0
+    for uy, ux in DIRS:
+        p, q = _shift_slices(h, w, uy * d, ux * d)
+        Ap, Aq = A[p], A[q]
+        sel = np.abs(Ap - Aq) >= 0.5 * am
+        if not sel.any():
+            continue
+        ap, aq, sc = Ap[sel], Aq[sel], sec_map[p][sel]
+        for I in planes:
+            ip, iq = I[p][sel], I[q][sel]
+            den = ap * (white - iq) - aq * (white - ip)
+            okm = np.abs(den) > den_min
+            if okm.any():
+                ks.append((ip[okm] - iq[okm]) / den[okm])
+                ws.append(np.abs(den[okm]))
+                ss.append(sc[okm])
+    if not ks:
+        return meds
+    k, wt, sc = np.concatenate(ks), np.concatenate(ws), np.concatenate(ss)
+    for i in range(n_sec):
+        m = sc == i
+        if m.sum() >= 12:
+            meds[i] = _wmedian(k[m], wt[m])
+    return meds
+
+
+def evidence(planes, x, y, s, W, H, k0: float):
+    """(number of sectors whose strength is compatible with ``k0``, number of
+    usable sectors, z-score of the common strength)."""
+    d = stride_for(s)
+    box, sub = _patch(planes, x, y, s, W, H, d + 2)
+    A = E.render_alpha(E.Templates.get().variants["v1"], x, y, s, *box)
+    meds = sector_stats(sub, A, d, (x + s / 2.0 - box[0], y + s / 2.0 - box[1]))
+    val = meds[np.isfinite(meds)]
+    if len(val) < 5:
+        return 0, len(val), 0.0
+    med = float(np.median(val))
+    spread = 1.4826 * float(np.median(np.abs(val - med)))
+    z = med / (spread / np.sqrt(len(val)) + 0.02)
+    return int(((val >= 0.4 * k0) & (val <= 1.9 * k0)).sum()), len(val), float(z)
+
+
 def plateau_of(variant: str) -> float:
     """Alpha of the flat interior of a template (k = 1)."""
     return float(np.percentile(E.Templates.get().template(variant), 90))
@@ -565,16 +628,40 @@ def profile_at(planes, x, y, s, W, H, k):
     return profile_test(sub, A, max(k, 0.05), d)
 
 
+# strength (v1 template) Gemini uses on each layout: 48 px @ 96 px margin -> ~0.58,
+# 48 @ 32 and 96 @ 64 -> ~1.0
+NOMINAL_K = {PRIOR_RATIOS[0]: 1.0, PRIOR_RATIOS[1]: 0.58}
+
+
+def _evidence_ok(planes, v: Vote, x, y, s, W, H) -> bool:
+    """Second way to accept a logo on a known layout (v3.0): grainy photographic
+    backgrounds.  Single pixel pairs disagree there (low inlier ratio), but the
+    strength measured sector by sector all round the outline is the same and
+    equals what Gemini uses on that layout.  Calibrated on ~900 logo-free and
+    ~300 logo corners with film grain: no false alarm, all logos accepted."""
+    k0 = NOMINAL_K.get(prior_ratio(x, y, s, W, H))
+    if k0 is None or v.inlier < 0.10 or not (0.7 * k0 <= v.k <= 1.3 * k0):
+        return False
+    ok, n, z = evidence(planes, x, y, s, W, H, k0)
+    if n < 7 or ok < 7 or z < 7.0:
+        return False
+    r_in, r_out, npf = profile_at(planes, x, y, s, W, H, v.k)
+    return not (npf >= 16 and (r_in > 0.25 or abs(r_out) > 0.25))
+
+
 def _accept(planes, v: Vote, x, y, s, W, H, on: bool, manual: bool) -> bool:
     if not v.ok or v.n < 60:
         return False
     if manual:
-        return v.inlier >= T_MANUAL
+        if v.inlier >= T_MANUAL:
+            return True
+        ok, n, z = evidence(planes, x, y, s, W, H, v.k)
+        return v.inlier >= 0.08 and n >= 6 and ok >= 6 and z >= 5.0
     if not (K_AUTO_MIN <= v.k <= K_AUTO_MAX):
         return False
     if on:
         if v.inlier < T_ON_PRIOR:
-            return False
+            return _evidence_ok(planes, v, x, y, s, W, H)
     elif not (s >= 24.0 and v.inlier >= T_OFF_PRIOR and v.quad >= 0.35):
         return False
     # glints, sparks and soft highlights drawn by the artist: the step is not
@@ -604,6 +691,11 @@ def detect(rgb: np.ndarray, prior=None) -> E.Geometry:
     cands = dense_candidates(planes, roi, smin, smax, W, H, top=8 if not manual else 4)
     if manual:
         cands.append((1.0, float(prior[0]), float(prior[1]), float(prior[2]), False))
+    else:
+        # files straight from Gemini: always try the exact native placements
+        for sz, mg in ((48.0, 96.0), (48.0, 32.0), (96.0, 64.0)):
+            if W - mg - sz >= roi[0] and H - mg - sz >= roi[1]:
+                cands.append((1.0, W - mg - sz, H - mg - sz, sz, True))
     best = None
     for sc, x, y, s, _ in cands:
         if s < 8 or x < 0 or y < 0 or x + s > W or y + s > H:
@@ -637,6 +729,12 @@ def detect(rgb: np.ndarray, prior=None) -> E.Geometry:
     v2 = vote_at(planes, x, y, s, W, H, variant=var, beta=beta)
     if v2.n >= 60 and v2.inlier >= 0.7 * v.inlier:
         k = v2.k
+    # on a known layout the strength is known too: keep the estimate close to
+    # it, so that a noisy background can never leave a dark or pale star behind
+    k0 = NOMINAL_K.get(prior_ratio(x, y, s, W, H)) if on else None
+    if k0 is not None and var == "v1" and s >= 30:
+        tol = 0.08 if min(abs(s - 48.0), abs(s - 96.0)) <= 1.5 else 0.15
+        k = float(np.clip(k, k0 * (1 - tol), k0 * (1 + tol)))
     plateau = k * plateau_of(var)
     lo, hi = PLATEAU_MANUAL if manual else (PLATEAU_MIN, PLATEAU_MAX)
     if not (lo <= plateau <= hi):

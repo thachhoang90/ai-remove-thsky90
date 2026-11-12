@@ -59,8 +59,11 @@ def output_path(src: str, base: str | None, out_dir: str, new_ext: str | None = 
 
 
 def process_image_file(src: str, dst: str, opts: E.Options | None = None,
-                       strip_metadata: bool = True, geo: E.Geometry | None = None):
-    """Returns the Geometry that was used (geo.found tells if a logo was removed)."""
+                       strip_metadata: bool = True, geo: E.Geometry | None = None, post=None):
+    """Returns the Geometry that was used (geo.found tells if a logo was removed).
+
+    ``post``: optional function applied to every finished frame before saving
+    (v3.0: used to insert the user's own logo)."""
     opts = opts or E.Options()
     li = IF.load(src)
     frames = li.frames
@@ -79,6 +82,8 @@ def process_image_file(src: str, dst: str, opts: E.Options | None = None,
             outs = [apply_geometry(fr, geo, opts) for fr in frames]
     else:
         outs = [apply_geometry(fr, geo, opts) for fr in frames]
+    if post is not None:
+        outs = [post(o) for o in outs]
     IF.save(li, outs, dst, strip_metadata)
     return geo
 

@@ -63,7 +63,17 @@
         <label class="sel">Cách xóa
           <select id="method"><option value="alpha">Khử alpha (chính xác – khuyên dùng)</option><option value="inpaint">Vá vùng (inpaint)</option></select>
         </label>
+        <button class="btn sm" id="logoBtn" title="Chèn thêm logo của bạn vào ảnh kết quả">Chèn logo…</button>
         <button class="btn sm accent" id="preview">Xem kết quả</button>
+      </div>
+      <div class="ctl wm" id="wmPanel" hidden>
+        <label class="btn sm">Chọn logo…<input type="file" id="wmFile" accept=".png,.webp,.jpg,.jpeg,.bmp" hidden></label>
+        <span id="wmName" class="wmname">Chưa chọn logo</span>
+        <label><input type="checkbox" id="wmOn"> Chèn logo này vào ảnh khi xem trước và khi xử lý</label>
+        <label class="sel">Vị trí <select id="wmPos"></select></label>
+        <label>Độ đậm <input type="range" id="wmOpacity" min="5" max="100" value="80"><b id="wmOpacityV">80%</b></label>
+        <label>Kích thước <input type="range" id="wmScale" min="2" max="60" value="18"><b id="wmScaleV">18%</b></label>
+        <label>Cách mép <input type="range" id="wmMargin" min="0" max="20" value="3"><b id="wmMarginV">3%</b></label>
       </div>
       <div class="ctl man">
         <label>X <input type="number" id="bx" step="0.5"></label>
@@ -181,6 +191,7 @@
   <button class="btn big folder" id="pickOut">Chọn thư mục lưu…</button>
   <span id="outName" class="outname"></span>
   <button class="btn big primary" id="start">Bắt đầu xử lý ảnh</button>
+  <button class="btn big scan" id="scan" title="Dò logo Gemini trên mọi tệp: tệp có logo được tích chọn, tệp không thấy logo bị bỏ tích">Quét dò tìm logo tự động</button>
   <button class="btn big danger" id="stop" disabled>Ngưng tiến trình</button>
   <button class="btn big dlsel" id="zipSel" disabled>Tải các mục đã chọn</button>
   <button class="btn big dlall" id="zipAll" disabled>Tải tất cả (.zip)</button>

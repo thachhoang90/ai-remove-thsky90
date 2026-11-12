@@ -2,6 +2,7 @@
 import * as E from './engine.js';
 import * as L from './logo.js';
 import { attachScrollbars } from './scrollbars.js';
+import * as O from './editor/ops.js';
 import * as M from './meta.js';
 
 const $ = id => document.getElementById(id);
@@ -360,6 +361,7 @@ async function makePreview() {
     let out;
     if (it.kind === 'image') {
       out = (o.mode === 'auto' && o.method === 'alpha' && it.geo) ? runImageWithGeo(it.preview, it.geo) : L.processImage(it.preview, o).img;
+      out = withLogo(out);
     } else {
       const geo = await videoGeo(it, o);
       const tt = Math.min(it.info.duration * ($('seek').value / 1000), Math.max(0, it.info.duration - 0.1));
@@ -436,6 +438,65 @@ async function encodeImage(img, srcFile, strip) {
   return { blob: new Blob([bytes], { type: MIME[e] }), ext: e, orig, bytes };
 }
 
+// ---------------------------------------------------------------------------
+// v3.0: chèn logo riêng vào ảnh kết quả (tab Ảnh)
+const wm = { logo: null, on: false, st: { position: 'br', opacity: 80, scale: 18, margin: 3 } };
+const wmActive = () => state.kind === 'image' && wm.on && wm.logo;
+function withLogo(img) { return wmActive() ? O.composeWatermark(img, wm.logo, wm.st) : img; }
+function wmChanged() {
+  wm.on = $('wmOn').checked && !!wm.logo;
+  wm.st = { position: $('wmPos').value, opacity: +$('wmOpacity').value, scale: +$('wmScale').value, margin: +$('wmMargin').value };
+  for (const k of ['Opacity', 'Scale', 'Margin']) $('wm' + k + 'V').textContent = $('wm' + k).value + '%';
+  $('logoBtn').textContent = wm.on ? 'Chèn logo: đang bật' : 'Chèn logo…'; $('logoBtn').classList.toggle('on', wm.on);
+  if (view.after) { view.setAfter(null); setView('before'); }
+}
+for (const [key, [label]] of Object.entries(O.POSITIONS)) { const o = document.createElement('option'); o.value = key; o.textContent = label; $('wmPos').appendChild(o); }
+$('wmPos').value = 'br';
+$('logoBtn').onclick = () => { $('wmPanel').hidden = !$('wmPanel').hidden; };
+$('wmFile').onchange = async e => {
+  const f = e.target.files[0]; if (!f) return;
+  try { wm.logo = await createImageBitmap(f); $('wmName').textContent = f.name; $('wmOn').checked = true; wmChanged(); }
+  catch (err) { alert('Không đọc được logo: ' + err.message); }
+};
+for (const id of ['wmOn', 'wmPos', 'wmOpacity', 'wmScale', 'wmMargin']) $(id).addEventListener('input', wmChanged);
+
+// ---------------------------------------------------------------------------
+// v3.0: quét dò tìm logo tự động - tích chọn tệp có logo, bỏ tích tệp không thấy logo
+$('scan').onclick = async () => {
+  if (state.busy) return;
+  const t = tab();
+  if (!t.items.length) { alert('Danh sách đang trống.'); return; }
+  state.busy = true; state.cancel = false;
+  $('start').disabled = true; $('scan').disabled = true; $('stop').disabled = false;
+  document.querySelectorAll('.tab').forEach(b => (b.disabled = true));
+  const todo = t.items.filter(x => !x.manualBox);
+  let found = 0, miss = 0, i = 0;
+  log(`— Quét dò tìm logo trên ${todo.length} tệp…`);
+  for (const it of todo) {
+    if (state.cancel) break;
+    progress(i++ / todo.length, `Đang quét ${i}/${todo.length}: ${it.rel}`);
+    await new Promise(r => setTimeout(r, 5));
+    try {
+      if (!it.geo) {
+        if (it.kind === 'image') {
+          const img = it.preview && it.preview.width ? it.preview : await decodeImage(it.file);
+          it.size = [img.width, img.height]; it.geo = L.detect(img);
+        } else { await ensureVideo(it); it.geo = await V.detect(it.ffName, it.info, {}); }
+      }
+    } catch (err) { console.error(err); }
+    const ok = !!(it.geo && it.geo.found);
+    it.checked = ok; it.status = ok ? 'Có logo – chờ xử lý' : 'Không thấy logo'; it.cls = ok ? '' : 'warn';
+    ok ? found++ : miss++;
+    renderList();
+  }
+  updateSel();
+  progress(1, `Quét xong: ${found} tệp có logo (đã tích chọn), ${miss} tệp không thấy logo (đã bỏ tích)`, 'done');
+  log(`— Quét xong: ${found} tệp có logo (đã tích chọn), ${miss} tệp không thấy logo (đã bỏ tích). Tệp bỏ tích vẫn có thể đặt khung thủ công rồi tích lại.`);
+  state.busy = false; state.cancel = false;
+  $('start').disabled = false; $('scan').disabled = false; $('stop').disabled = true;
+  document.querySelectorAll('.tab').forEach(b => (b.disabled = false));
+};
+
 $('start').onclick = async () => {
   if (state.busy) return;
   const t = tab();
@@ -471,6 +532,7 @@ $('start').onclick = async () => {
         else res = L.processImage(img, o);
         geo = res.geo;
         if (state.cancel) throw new Error('__cancel__');
+        res.img = withLogo(res.img);
         const enc = await encodeImage(res.img, it.file, strip);
         await saveOut(it, enc.blob, `${base}.${enc.ext}`);
         const before = M.scan(enc.orig), after = M.scan(enc.bytes);

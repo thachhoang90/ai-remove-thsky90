@@ -226,3 +226,12 @@ body.editing .main, body.editing .bar { display: none !important; }
 .sb i.drag { cursor: grabbing; }
 .sb.off { opacity: .28; pointer-events: none; }
 .sb.off i { display: none; }
+
+/* v3.0: nút quét dò tìm logo + bảng chèn logo trong tab Ảnh */
+.btn.scan { background: #0891B2; color: #fff; border-color: #0891B2; }
+.btn.scan:hover:not(:disabled) { background: #0E7490; }
+.ctl.wm { background: #F5F7FF; border: 1px dashed #C7D2FE; border-radius: 8px; padding: 8px 10px; gap: 10px 16px; }
+.ctl.wm input[type=range] { width: 110px; vertical-align: middle; }
+.ctl.wm b { display: inline-block; min-width: 38px; font-weight: 600; }
+.wmname { color: #475569; font-size: 13px; }
+#logoBtn.on { background: #ECFDF5; color: #047857; border-color: #A7F3D0; }

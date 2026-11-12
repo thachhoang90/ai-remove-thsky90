@@ -568,11 +568,61 @@ function refine(planes, W, H, x, y, s, k, variants = ['v1', 'n48', 'v2'], rounds
 // ---------------------------------------------------------------------------
 // Public: detect
 // ---------------------------------------------------------------------------
+// strength (v1 template) Gemini uses on each layout: 48 px @ 96 px margin -> ~0.58, 48@32 and 96@64 -> ~1.0
+const nominalK = r => (r === null ? null : (r === PRIOR_RATIOS[0] ? 1.0 : 0.58));
+
+/** v3.0 - grainy photographic backgrounds (sand, grass, wood): single pixel pairs
+ *  disagree, but the strength measured in 8 sectors all round the outline is the
+ *  same.  Returns [sectors compatible with k0, usable sectors, z-score]. */
+function evidence(planes, W, H, x, y, s, k0) {
+  const d = strideFor(s), NS = 8;
+  const [bx, by, bw, bh] = boxWithMargin(x, y, s, W, H, d + 2);
+  const A = renderAlpha(T.v1, x, y, s, bx, by, bw, bh);
+  const cx = x + s / 2 - bx, cy = y + s / 2 - by;
+  let am = 0;
+  for (let i = 0; i < A.length; i++) if (A[i] > am) am = A[i];
+  if (am <= 1e-6) return [0, 0, 0];
+  const ks = Array.from({ length: NS }, () => []), ws = Array.from({ length: NS }, () => []);
+  const denMin = 0.5 * am * 10;
+  for (const [uy, ux] of DIRS) {
+    const dy = uy * d, dx = ux * d, xa = dx >= 0 ? 0 : -dx, xb = dx >= 0 ? bw - dx : bw;
+    for (let yy = 0; yy < bh - dy; yy++) for (let xx = xa; xx < xb; xx++) {
+      const ap = A[yy * bw + xx], aq = A[(yy + dy) * bw + xx + dx];
+      if (Math.abs(ap - aq) < 0.5 * am) continue;
+      const sec = Math.floor((Math.atan2(yy - cy, xx - cx) + Math.PI) / (2 * Math.PI) * NS) % NS;
+      const gp = (by + yy) * W + bx + xx, gq = gp + dy * W + dx;
+      for (const P of planes) {
+        const den = ap * (255 - P[gq]) - aq * (255 - P[gp]);
+        if (Math.abs(den) > denMin) { ks[sec].push((P[gp] - P[gq]) / den); ws[sec].push(Math.abs(den)); }
+      }
+    }
+  }
+  const val = [];
+  for (let i = 0; i < NS; i++) if (ks[i].length >= 12) val.push(wmedian(ks[i], ws[i], ks[i].length));
+  if (val.length < 5) return [0, val.length, 0];
+  const med = percentile(val, 50), spread = 1.4826 * percentile(val.map(v => Math.abs(v - med)), 50);
+  const z = med / (spread / Math.sqrt(val.length) + 0.02);
+  return [val.filter(v => v >= 0.4 * k0 && v <= 1.9 * k0).length, val.length, z];
+}
+
+function evidenceOk(planes, W, H, v, x, y, s) {
+  const k0 = nominalK(priorRatio(x, y, s, W, H));
+  if (k0 === null || v.inlier < 0.10 || v.k < 0.7 * k0 || v.k > 1.3 * k0) return false;
+  const [ok, n, z] = evidence(planes, W, H, x, y, s, k0);
+  if (n < 7 || ok < 7 || z < 7) return false;
+  const [rin, rout, np] = profileAt(planes, W, H, x, y, s, v.k);
+  return !(np >= 16 && (rin > 0.25 || Math.abs(rout) > 0.25));
+}
+
 function accept(planes, W, H, v, x, y, s, on, manual) {
   if (!voteOk(v) || v.n < 60) return false;
-  if (manual) return v.inlier >= T_MANUAL;
+  if (manual) {
+    if (v.inlier >= T_MANUAL) return true;
+    const [ok, n, z] = evidence(planes, W, H, x, y, s, v.k);
+    return v.inlier >= 0.08 && n >= 6 && ok >= 6 && z >= 5;
+  }
   if (v.k < K_AUTO_MIN || v.k > K_AUTO_MAX) return false;
-  if (on) { if (v.inlier < T_ON_PRIOR) return false; }
+  if (on) { if (v.inlier < T_ON_PRIOR) return evidenceOk(planes, W, H, v, x, y, s); }
   else if (!(s >= 24 && v.inlier >= T_OFF_PRIOR && v.quad >= 0.35)) return false;
   const [rin, rout, n] = profileAt(planes, W, H, x, y, s, v.k);
   return !(n >= 16 && (rin > PROFILE_MAX || Math.abs(rout) > PROFILE_MAX));
@@ -590,6 +640,10 @@ export function detect(img, prior = null) {
   } else {
     const roi = cornerRoi(W, H);
     cands = priorScan(planes, W, H, roi, 14, Math.max(60, 0.14 * Math.min(W, H)));
+    // files straight from Gemini: always try the exact native placements
+    for (const [sz, mg] of [[48, 96], [48, 32], [96, 64]]) {
+      if (W - mg - sz >= roi[0] && H - mg - sz >= roi[1]) cands.push({ x: W - mg - sz, y: H - mg - sz, s: sz });
+    }
     // anywhere else in the corner (only logos of 24 px and more are accepted off the known layouts)
     cands.push(...denseScan(planes, W, H, roi, 24, Math.max(60, 0.14 * Math.min(W, H))));
   }
@@ -613,6 +667,12 @@ export function detect(img, prior = null) {
   const v2 = voteAt(planes, W, H, f.x, f.y, f.s, f.variant, null, f.beta);
   let k = f.k;
   if (v2.n >= 60 && v2.inlier >= 0.7 * best.v.inlier) k = v2.k;
+  // on a known layout the strength is known too: keep the estimate close to it
+  const k0 = best.on ? nominalK(priorRatio(f.x, f.y, f.s, W, H)) : null;
+  if (k0 !== null && f.variant === 'v1' && f.s >= 30) {
+    const tol = Math.min(Math.abs(f.s - 48), Math.abs(f.s - 96)) <= 1.5 ? 0.08 : 0.15;
+    k = clamp(k, k0 * (1 - tol), k0 * (1 + tol));
+  }
   const plateau = k * plateauOf(f.variant);
   const [lo, hi] = manual ? PLATEAU_MANUAL : [PLATEAU_MIN, PLATEAU_MAX];
   if (!(plateau >= lo && plateau <= hi)) return miss('implausible-strength');

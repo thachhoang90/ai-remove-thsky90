@@ -13,7 +13,7 @@ from PySide6.QtCore import (QObject, QPointF, QRectF, QSettings, Qt, QThread, QT
 from PySide6.QtGui import (QAction, QColor, QDesktopServices, QFont, QIcon, QImage, QPainter,
                            QPainterPath, QPalette, QPen, QPixmap)
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QButtonGroup, QCheckBox,
-                               QComboBox, QDoubleSpinBox, QFileDialog, QFrame, QGridLayout,
+                               QComboBox, QDialog, QDoubleSpinBox, QFileDialog, QFrame, QGridLayout,
                                QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMainWindow,
                                QMessageBox, QPlainTextEdit, QProgressBar, QPushButton,
                                QRadioButton, QSizePolicy, QSlider, QSplitter, QTabWidget,
@@ -25,6 +25,7 @@ from . import engine as E
 from . import imagefile as IF
 from . import video as V
 from .scrollview import ScrollFrame
+from .editor import ops as EO
 
 APP_NAME = "AI Remove - thsky90"
 ACCENT = "#4F46E5"
@@ -88,8 +89,9 @@ class BatchWorker(QThread):
     log = Signal(str)
     finished_all = Signal(int, int, float)
 
-    def __init__(self, kind, jobs, out_dir, strip, method, force_mp4):
+    def __init__(self, kind, jobs, out_dir, strip, method, force_mp4, wm=None):
         super().__init__()
+        self.wm = wm                # (logo RGBA, WatermarkSettings) hoặc None
         self.kind = kind
         self.jobs = jobs            # list of (index, Item snapshot dict)
         self.out_dir = out_dir
@@ -127,7 +129,10 @@ class BatchWorker(QThread):
                         cancel=lambda: self._cancel, log=self.log.emit, geo=geo)
                 else:
                     self.file_progress.emit(0.3, "Đang xử lý…")
-                    geo = batch.process_image_file(src, dst, opts, self.strip, geo)
+                    post = None
+                    if self.wm:
+                        post = lambda o, wm=self.wm: EO.compose_watermark(o, wm[0], wm[1])  # noqa: E731
+                    geo = batch.process_image_file(src, dst, opts, self.strip, geo, post=post)
                     self.file_progress.emit(1.0, "Xong")
                 after = IF.scan_metadata(dst)
                 if geo.found:
@@ -140,6 +145,8 @@ class BatchWorker(QThread):
                     state, detail = "Đã vá vùng", "theo khung thủ công"
                 else:
                     state, detail = "Không thấy logo", "giữ nguyên ảnh/khung hình"
+                if self.wm and self.kind == "image":
+                    detail += ", đã chèn logo riêng"
                 meta = ""
                 if self.strip:
                     meta = (" | metadata: " + (", ".join(before) or "không có") + " → "
@@ -156,6 +163,122 @@ class BatchWorker(QThread):
                 self.file_done.emit(idx, "Lỗi", "")
                 fail += 1
         self.finished_all.emit(ok, fail, time.time() - t0)
+
+
+class ScanWorker(QThread):
+    """v3.0 - "Quét dò tìm logo tự động": dò logo Gemini trên mọi tệp của danh
+    sách (không xử lý, không ghi tệp) để chỉ những tệp có logo được tích chọn."""
+    item_done = Signal(int, object)        # chỉ số, Geometry (hoặc None nếu lỗi)
+    finished_all = Signal(float)
+
+    def __init__(self, kind, todo):
+        super().__init__()
+        self.kind = kind
+        self.todo = todo                   # list of (index, path, geo đã biết hoặc None)
+        self._cancel = False
+
+    def cancel(self):
+        self._cancel = True
+
+    def run(self):
+        t0 = time.time()
+        for idx, path, geo in self.todo:
+            if self._cancel:
+                break
+            try:
+                if geo is None:
+                    if self.kind == "image":
+                        geo = E.detect_image(IF.load(path).rgb)
+                    else:
+                        info = V.probe(path)
+                        geo = V.detect_video(V.sample_frames(path, info, 40), info)
+            except Exception:  # noqa: BLE001
+                traceback.print_exc()
+                geo = None
+            self.item_done.emit(idx, geo)
+        self.finished_all.emit(time.time() - t0)
+
+
+class LogoDialog(QDialog):
+    """v3.0 - "Chèn logo" ngay trong tab Ảnh: chọn một logo (PNG trong suốt là
+    tốt nhất), vị trí, độ đậm, kích thước.  Logo được chèn vào ảnh kết quả sau
+    khi gỡ logo Gemini, cả ở bản xem trước lẫn khi xử lý hàng loạt."""
+
+    def __init__(self, tab: "MediaTab"):
+        super().__init__(tab)
+        self.tab = tab
+        self.setWindowTitle("Chèn logo vào ảnh")
+        self.setMinimumWidth(460)
+        wm = tab.wm
+        st = wm["st"]
+        lay = QGridLayout(self)
+        b = QPushButton("Chọn logo…")
+        b.clicked.connect(self._pick)
+        self.lbl = QLabel(os.path.basename(wm["path"]) or "Chưa chọn logo")
+        lay.addWidget(b, 0, 0)
+        lay.addWidget(self.lbl, 0, 1, 1, 2)
+        self.chk = QCheckBox("Chèn logo này vào ảnh khi xem trước và khi xử lý")
+        self.chk.setChecked(wm["enabled"])
+        self.chk.toggled.connect(self._apply)
+        lay.addWidget(self.chk, 1, 0, 1, 3)
+        lay.addWidget(QLabel("Vị trí"), 2, 0)
+        self.cmb = QComboBox()
+        for key, (label, _, _) in EO.POSITIONS.items():
+            self.cmb.addItem(label, key)
+        self.cmb.setCurrentIndex(max(0, self.cmb.findData(st.position)))
+        self.cmb.currentIndexChanged.connect(self._apply)
+        lay.addWidget(self.cmb, 2, 1, 1, 2)
+        self.sliders = {}
+        rows = (("opacity", "Độ đậm (độ mờ)", 5, 100, st.opacity),
+                ("scale", "Kích thước (% chiều rộng ảnh)", 2, 60, st.scale),
+                ("margin", "Cách mép (% cạnh ngắn)", 0, 20, st.margin))
+        for r, (key, label, lo, hi, val) in enumerate(rows, start=3):
+            sl = QSlider(Qt.Horizontal)
+            sl.setRange(lo, hi)
+            sl.setValue(int(round(val)))
+            vl = QLabel(f"{int(round(val))}%")
+            sl.valueChanged.connect(lambda v, vl=vl: (vl.setText(f"{v}%"), self._apply()))
+            lay.addWidget(QLabel(label), r, 0)
+            lay.addWidget(sl, r, 1)
+            lay.addWidget(vl, r, 2)
+            self.sliders[key] = sl
+        tip = QLabel("Logo được chèn sau khi gỡ logo Gemini. Bấm \"Xem thử\" để thấy kết quả trên ảnh đang chọn; "
+                     "khi bấm \"Bắt đầu xử lý ảnh\", logo được chèn vào mọi ảnh đã tích chọn.")
+        tip.setObjectName("Hint")
+        tip.setWordWrap(True)
+        lay.addWidget(tip, 6, 0, 1, 3)
+        row = QHBoxLayout()
+        bp = QPushButton("Xem thử trên ảnh đang chọn")
+        bp.setObjectName("Secondary")
+        bp.clicked.connect(self.tab.make_after)
+        bc = QPushButton("Đóng")
+        bc.clicked.connect(self.accept)
+        row.addWidget(bp)
+        row.addStretch(1)
+        row.addWidget(bc)
+        lay.addLayout(row, 7, 0, 1, 3)
+
+    def _pick(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Chọn logo", os.path.dirname(self.tab.wm["path"]),
+                                              "Ảnh logo (*.png *.webp *.jpg *.jpeg *.bmp)")
+        if not path:
+            return
+        try:
+            logo = EO.load_logo(path)
+        except Exception as ex:  # noqa: BLE001
+            QMessageBox.warning(self, APP_NAME, f"Không đọc được logo:\n{ex}")
+            return
+        self.tab.wm.update(path=path, logo=logo)
+        self.lbl.setText(os.path.basename(path))
+        self.chk.setChecked(True)
+        self._apply()
+
+    def _apply(self, *_):
+        wm = self.tab.wm
+        wm["enabled"] = self.chk.isChecked() and wm["logo"] is not None
+        wm["st"] = EO.WatermarkSettings(self.cmb.currentData(), self.sliders["opacity"].value(),
+                                        self.sliders["scale"].value(), self.sliders["margin"].value())
+        self.tab.wm_changed()
 
 
 # ==========================================================================
@@ -434,6 +557,8 @@ class MediaTab(QWidget):
     # ---- UI -----------------------------------------------------------------
     def _build(self):
         is_img = self.kind == "image"
+        # v3.0: logo riêng của người dùng chèn vào ảnh kết quả (chỉ tab Ảnh)
+        self.wm = {"enabled": False, "logo": None, "path": "", "st": EO.WatermarkSettings()}
         lay = QHBoxLayout(self)
         lay.setContentsMargins(12, 12, 12, 12)
         split = QSplitter(Qt.Horizontal)
@@ -606,6 +731,11 @@ class MediaTab(QWidget):
             row2.addWidget(b)
             self.manual_widgets.append(b)
         row2.addStretch(1)
+        if is_img:
+            self.btn_logo = QPushButton("Chèn logo…")
+            self.btn_logo.setToolTip("Chèn thêm logo của bạn vào ảnh kết quả (chọn tệp, vị trí, độ mờ, kích thước)")
+            self.btn_logo.clicked.connect(lambda: LogoDialog(self).exec())
+            row2.addWidget(self.btn_logo)
         row2.addWidget(self.btn_prev)
         g.addLayout(row2, 2, 0, 1, 6)
         tip = QLabel("Thủ công: kéo khung xanh vào đúng ngôi sao, kéo góc để đổi cỡ; phím mũi tên dịch 1 px "
@@ -948,6 +1078,15 @@ class MediaTab(QWidget):
         self.status.emit(f"Đã áp dụng khung cho {n} tệp khác")
 
     # ---- after preview ----------------------------------------------------
+    def wm_active(self):
+        """(logo RGBA, cài đặt) nếu đang bật chèn logo, ngược lại None."""
+        return (self.wm["logo"], self.wm["st"]) if self.wm["enabled"] and self.wm["logo"] is not None else None
+
+    def wm_changed(self):
+        if hasattr(self, "btn_logo"):
+            self.btn_logo.setText("Chèn logo: đang bật" if self.wm_active() else "Chèn logo…")
+        self._invalidate_after()
+
     def _invalidate_after(self):
         self.canvas.set_after(None)
         if self.btn_after.isChecked():
@@ -989,11 +1128,12 @@ class MediaTab(QWidget):
         if self.kind == "image":
             geo_cached = it.geo if (opts.mode == "auto" and opts.method == "alpha") else None
 
-            def job(path=it.path, opts=opts, g=geo_cached):
+            def job(path=it.path, opts=opts, g=geo_cached, wm=self.wm_active()):
                 rgb = IF.load(path).rgb
-                if g is not None:
-                    return batch.apply_geometry(rgb, g, opts), g
-                return E.process_image(rgb, opts)
+                out, g2 = (batch.apply_geometry(rgb, g, opts), g) if g is not None else E.process_image(rgb, opts)
+                if wm:
+                    out = EO.compose_watermark(out, wm[0], wm[1])
+                return out, g2
         else:
             t = self.preview_t
             geo_cached = it.geo if (opts.mode == "auto") else None
@@ -1159,7 +1299,16 @@ class MainWindow(QMainWindow):
         self.btn_stop.setEnabled(False)
         self.btn_stop.clicked.connect(self.stop)
         sl = QHBoxLayout()
+        # v3.0: quét trước toàn bộ danh sách, chỉ tích chọn tệp có logo
+        self.btn_scan = QPushButton("Quét dò tìm logo tự động")
+        self.btn_scan.setObjectName("Scan")
+        self.btn_scan.setMinimumHeight(40)
+        self.btn_scan.setToolTip("Dò logo Gemini trên mọi tệp trong danh sách: tệp có logo được tích chọn, "
+                                 "tệp không thấy logo bị bỏ tích (tệp đã đặt khung thủ công giữ nguyên).")
+        self.btn_scan.clicked.connect(self.scan)
+        self.scanner = None
         sl.addWidget(self.btn_start, 3)
+        sl.addWidget(self.btn_scan, 2)
         sl.addWidget(self.btn_stop, 2)
         bl.addLayout(sl, 1, 5, 1, 1)
 
@@ -1266,7 +1415,8 @@ class MainWindow(QMainWindow):
         self.prog_all.setValue(0)
         self.prog_file.setValue(0)
         self.worker = BatchWorker(tab.kind, jobs, out, self.chk_meta.isChecked(),
-                                  tab.cmb_method.currentData(), bool(self.cmb_vfmt.currentData()))
+                                  tab.cmb_method.currentData(), bool(self.cmb_vfmt.currentData()),
+                                  wm=tab.wm_active() if tab.kind == "image" else None)
         self._tab_running = tab
         self.worker.file_started.connect(lambda i: tab.set_item_status(i, "Đang xử lý…"))
         self.worker.file_progress.connect(self._on_file_progress)
@@ -1274,12 +1424,67 @@ class MainWindow(QMainWindow):
         self.worker.log.connect(self.log)
         self.worker.finished_all.connect(self._on_all_done)
         self.btn_start.setEnabled(False)
+        self.btn_scan.setEnabled(False)
         self.btn_stop.setEnabled(True)
         self.tabs.tabBar().setEnabled(False)
         self.log(f"— Bắt đầu {len(jobs)} tệp → {out}")
         self.worker.start()
 
+    # ---- v3.0: quét dò tìm logo tự động -----------------------------------
+    def scan(self):
+        tab = self.tabs.currentWidget()
+        if not isinstance(tab, MediaTab):
+            return
+        if not tab.items:
+            QMessageBox.information(self, APP_NAME, "Danh sách đang trống. Hãy chọn tệp hoặc thư mục.")
+            return
+        todo = [(i, it.path, it.geo) for i, it in enumerate(tab.items) if not it.manual_box]
+        self._scan = {"tab": tab, "found": 0, "miss": 0, "manual": len(tab.items) - len(todo)}
+        self.prog_all.setFormat("Đã quét: %v/%m tệp")
+        self.prog_all.setRange(0, max(1, len(todo)))
+        self.prog_all.setValue(0)
+        self._tab_running = tab
+        self.scanner = ScanWorker(tab.kind, todo)
+        self.scanner.item_done.connect(self._on_scan_item)
+        self.scanner.finished_all.connect(self._on_scan_done)
+        self.btn_start.setEnabled(False)
+        self.btn_scan.setEnabled(False)
+        self.btn_stop.setEnabled(True)
+        self.tabs.tabBar().setEnabled(False)
+        self.log(f"— Quét dò tìm logo trên {len(todo)} tệp…")
+        self.scanner.start()
+
+    def _on_scan_item(self, i, geo):
+        tab = self._scan["tab"]
+        it = tab.items[i]
+        found = geo is not None and geo.found
+        if geo is not None:
+            it.geo = geo
+        self._scan["found" if found else "miss"] += 1
+        if it.tree is not None:
+            it.tree.setCheckState(0, Qt.Checked if found else Qt.Unchecked)
+        tab.set_item_status(i, "Có logo – chờ xử lý" if found else "Không thấy logo")
+        self.prog_all.setValue(self.prog_all.value() + 1)
+
+    def _on_scan_done(self, secs):
+        sc = self._scan
+        sc["tab"]._update_sel()
+        self.btn_start.setEnabled(True)
+        self.btn_scan.setEnabled(True)
+        self.btn_stop.setEnabled(False)
+        self.tabs.tabBar().setEnabled(True)
+        extra = f", {sc['manual']} tệp có khung thủ công giữ nguyên" if sc["manual"] else ""
+        self.log(f"— Quét xong ({secs:.1f} giây): {sc['found']} tệp có logo (đã tích chọn), "
+                 f"{sc['miss']} tệp không thấy logo (đã bỏ tích){extra}. "
+                 "Tệp bỏ tích vẫn có thể đặt khung thủ công rồi tích lại.")
+        self.show_status(f"Quét xong: {sc['found']} tệp có logo")
+        self.scanner = None
+
     def stop(self):
+        if self.scanner:
+            self.scanner.cancel()
+            self.btn_stop.setEnabled(False)
+            self.show_status("Đang dừng quét…")
         if self.worker:
             self.worker.cancel()
             self.btn_stop.setEnabled(False)
@@ -1295,6 +1500,7 @@ class MainWindow(QMainWindow):
 
     def _on_all_done(self, ok, fail, secs):
         self.btn_start.setEnabled(True)
+        self.btn_scan.setEnabled(True)
         self.btn_stop.setEnabled(False)
         self.tabs.tabBar().setEnabled(True)
         self.prog_file.setValue(1000)
@@ -1353,6 +1559,9 @@ QPushButton#Open:hover { background: #D1FAE5; }
 QPushButton#Primary { background: %(accent)s; color: white; border: none; font-weight: 700; font-size: 12pt; }
 QPushButton#Primary:hover { background: #4338CA; }
 QPushButton#Primary:disabled { background: #A5B4FC; color: #EEF2FF; }
+QPushButton#Scan { background: #0891B2; color: white; border: none; font-weight: 700; font-size: 11.5pt; }
+QPushButton#Scan:hover { background: #0E7490; }
+QPushButton#Scan:disabled { background: #A5F3FC; color: #ECFEFF; }
 QPushButton#Danger { background: #DC2626; color: white; border: none; font-weight: 700; font-size: 12pt; }
 QPushButton#Danger:hover { background: #B91C1C; }
 QPushButton#Danger:disabled { background: #FCA5A5; color: #FEF2F2; }
