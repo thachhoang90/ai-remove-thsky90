@@ -655,8 +655,18 @@ def _accept(planes, v: Vote, x, y, s, W, H, on: bool, manual: bool) -> bool:
     if manual:
         if v.inlier >= T_MANUAL:
             return True
-        ok, n, z = evidence(planes, x, y, s, W, H, v.k)
-        return v.inlier >= 0.08 and n >= 6 and ok >= 6 and z >= 5.0
+        # grainy background inside the user's box: same sector test as on the
+        # known layouts, against the two strengths Gemini uses
+        if v.inlier < 0.12:
+            return False
+        k0 = min((0.58, 1.0), key=lambda q: abs(v.k - q))
+        if not (0.7 * k0 <= v.k <= 1.3 * k0):
+            return False
+        ok, n, z = evidence(planes, x, y, s, W, H, k0)
+        if n < 7 or ok < 7 or z < 8.0:
+            return False
+        r_in, r_out, npf = profile_at(planes, x, y, s, W, H, v.k)
+        return not (npf >= 16 and (r_in > 0.25 or abs(r_out) > 0.25))
     if not (K_AUTO_MIN <= v.k <= K_AUTO_MAX):
         return False
     if on:

@@ -618,8 +618,14 @@ function accept(planes, W, H, v, x, y, s, on, manual) {
   if (!voteOk(v) || v.n < 60) return false;
   if (manual) {
     if (v.inlier >= T_MANUAL) return true;
-    const [ok, n, z] = evidence(planes, W, H, x, y, s, v.k);
-    return v.inlier >= 0.08 && n >= 6 && ok >= 6 && z >= 5;
+    // grainy background inside the user's box: same sector test, against the two strengths Gemini uses
+    if (v.inlier < 0.12) return false;
+    const k0 = Math.abs(v.k - 0.58) <= Math.abs(v.k - 1.0) ? 0.58 : 1.0;
+    if (v.k < 0.7 * k0 || v.k > 1.3 * k0) return false;
+    const [ok, n, z] = evidence(planes, W, H, x, y, s, k0);
+    if (n < 7 || ok < 7 || z < 8) return false;
+    const [rin, rout, np] = profileAt(planes, W, H, x, y, s, v.k);
+    return !(np >= 16 && (rin > 0.25 || Math.abs(rout) > 0.25));
   }
   if (v.k < K_AUTO_MIN || v.k > K_AUTO_MAX) return false;
   if (on) { if (v.inlier < T_ON_PRIOR) return evidenceOk(planes, W, H, v, x, y, s); }
