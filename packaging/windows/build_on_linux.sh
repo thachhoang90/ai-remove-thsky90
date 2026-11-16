@@ -59,17 +59,36 @@ for d in "$SP"/*.data; do
   done
   rm -rf "$d"
 done
-# trim Qt: the app only needs QtCore/QtGui/QtWidgets
+# trim Qt: the app needs QtCore/QtGui/QtWidgets + QtWebEngine (embedded browser tabs, v3.2)
 Q="$SP/PySide6"
-rm -rf "$Q/include" "$Q/typesystems" "$Q/glue" "$Q/examples" "$Q/qml" "$Q/translations" \
-       "$Q/resources" "$Q/metatypes" "$Q/doc" "$Q/scripts" "$Q/support" "$Q/Qt/lib/cmake"
-find "$Q" -maxdepth 1 -type f \( -name "*.exe" -o -name "opengl32sw.dll" -o -name "d3dcompiler*.dll" \) -delete
-# whitelist: keep only Core/Gui/Widgets
+rm -rf "$Q/include" "$Q/typesystems" "$Q/glue" "$Q/examples" "$Q/qml" \
+       "$Q/metatypes" "$Q/doc" "$Q/scripts" "$Q/support" "$Q/Qt/lib/cmake"
+# QtWebEngine data: keep the Chromium resources and two UI languages only
+find "$Q/translations" -maxdepth 1 -type f -delete 2>/dev/null || true
+find "$Q/translations/qtwebengine_locales" -type f ! -name "en-US.pak" ! -name "vi.pak" -delete 2>/dev/null || true
+rm -f "$Q/resources/qtwebengine_devtools_resources.pak"
+find "$Q" -maxdepth 1 -type f -name "*.exe" ! -name "QtWebEngineProcess.exe" -delete
+# whitelist of Qt DLLs: Core/Gui/Widgets + everything Qt6WebEngineWidgets.dll imports (transitively)
+KEEP="$(python3 - "$Q" <<'PY'
+import re, subprocess, sys, os
+q = sys.argv[1]
+keep, todo = {"Qt6Core.dll", "Qt6Gui.dll", "Qt6Widgets.dll"}, ["Qt6WebEngineWidgets.dll"]
+while todo:
+    d = todo.pop()
+    if d in keep and d != "Qt6WebEngineWidgets.dll" or not os.path.exists(os.path.join(q, d)):
+        continue
+    keep.add(d)
+    out = subprocess.run(["x86_64-w64-mingw32-objdump", "-p", os.path.join(q, d)], capture_output=True, text=True).stdout
+    todo += [m for m in re.findall(r"DLL Name: (Qt6\w+\.dll)", out) if m not in keep]
+print(" ".join(sorted(keep)))
+PY
+)"
+echo "   Qt DLLs kept: $KEEP"
 for f in "$Q"/Qt6*.dll; do
-  case "$(basename "$f")" in Qt6Core.dll|Qt6Gui.dll|Qt6Widgets.dll) ;; *) rm -f "$f";; esac
+  case " $KEEP " in *" $(basename "$f") "*) ;; *) rm -f "$f";; esac
 done
 for f in "$Q"/Qt*.pyd "$Q"/Qt*.pyi; do
-  case "$(basename "$f")" in QtCore.pyd|QtGui.pyd|QtWidgets.pyd) ;; *) rm -f "$f";; esac
+  case "$(basename "$f")" in QtCore.pyd|QtGui.pyd|QtWidgets.pyd|QtNetwork.pyd|QtPrintSupport.pyd|QtWebChannel.pyd|QtWebEngineCore.pyd|QtWebEngineWidgets.pyd|QtOpenGL.pyd|QtQml.pyd|QtQuick.pyd|QtPositioning.pyd) ;; *) rm -f "$f";; esac
 done
 if [ -d "$Q/plugins" ]; then
   for d in "$Q"/plugins/*; do

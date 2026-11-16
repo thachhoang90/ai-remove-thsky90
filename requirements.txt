@@ -4,5 +4,6 @@ opencv-python-headless==4.11.0.86
 pillow==12.3.0
 pillow-heif==1.8.1
 PySide6-Essentials==6.8.3
+PySide6-Addons==6.8.3      # only QtWebEngine is kept (tabs with an embedded browser, v3.2)
 shiboken6==6.8.3
 # imageio-ffmpeg (0.8.1) is only used to provide ffmpeg.exe, see packaging/windows

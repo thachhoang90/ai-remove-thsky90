@@ -75,6 +75,28 @@ def yuv_to_rgb(y, u, v, full_range=False):
     return np.clip(np.stack([r, g, b], -1), 0, 255).astype(np.uint8)
 
 
+def rgb_to_yuv(rgb: np.ndarray, full_range=False):
+    """Exact inverse of ``yuv_to_rgb`` (float planes at full resolution)."""
+    r, g, b = rgb[..., 0], rgb[..., 1], rgb[..., 2]
+    yy = 0.299 * r + 0.587 * g + 0.114 * b
+    uu = (b - yy) / 1.772
+    vv = (r - yy) / 1.402
+    if not full_range:
+        return 16 + yy * (219 / 255), 128 + uu * (224 / 255), 128 + vv * (224 / 255)
+    return yy, 128 + uu, 128 + vv
+
+
+def _snap_native(geo: E.Geometry, W: int, H: int) -> bool:
+    """Clips straight from Veo/Gemini carry the logo on whole pixels at one of
+    the known placements; use that exact geometry when the fit lands on it."""
+    for sz, mg in ((48.0, 96.0), (48.0, 72.0), (48.0, 32.0), (96.0, 64.0)):
+        nx, ny = W - mg - sz, H - mg - sz
+        if abs(geo.x - nx) <= 1.5 and abs(geo.y - ny) <= 1.5 and abs(geo.size - sz) <= 0.04 * sz:
+            geo.x, geo.y, geo.size, geo.sharp = float(nx), float(ny), float(sz), 0.0
+            return True
+    return False
+
+
 def grab_rgb(path: str, t: float, info: VideoInfo | None = None):
     info = info or probe(path)
     y, u, v = grab_yuv(path, t, info)
@@ -202,7 +224,11 @@ def detect_video(frames, info: VideoInfo, opts: E.Options | None = None) -> E.Ge
     pick = [Ys[i] for q, i in rank[:8] if q > 0] or [Ys[rank[0][1]]]
     geo = E.fit_geometry(pick, (x, y, s), wy, W, H, score)
     geo.extra_frames = len(pick)
-    if geo.found and opts.extra.get("calibrate", True):
+    if geo.found:
+        _snap_native(geo, W, H)
+    # v3.2: frames are restored in RGB with the still-image method (see
+    # FrameRemover); the Y-plane alpha calibration is only used on request
+    if geo.found and opts.extra.get("calibrate", False):
         cal = calibrate_alpha(Ys, geo, wy, W, H)
         if cal is not None:
             geo.calib = cal
@@ -328,24 +354,40 @@ def calibrate_alpha(Ys, geo: E.Geometry, white: float, W: int, H: int):
 
 
 class FrameRemover:
+    """Removes the logo from one decoded frame (planes Y, U, V are edited in place).
+
+    v3.2: the patch around the logo is converted to RGB and restored with the
+    still-image method (``restore.remove``: exact reverse blend with the
+    calibrated sparkle shape, interior aligned with its surroundings, guarded
+    outline clean-up), then written back to Y/U/V - only inside the logo.
+    On the sample clips this leaves no faint star / cross / edge marks, which
+    the former Y-plane method (alpha map averaged over the clip) did."""
+
     def __init__(self, geo: E.Geometry, W: int, H: int, white_y: float,
-                 method: str = "alpha", seam: float = 1.0):
+                 method: str = "alpha", seam: float = 1.0, full_range: bool = False):
+        from . import detect as D
         self.geo = geo
         self.box = _boxes(geo, W, H)
         bx, by, bw, bh = self.box
         self.white_y = white_y
+        self.full = full_range
         self.method = "inpaint" if (method == "inpaint" or not geo.found) else "alpha"
         self.seam = seam
         if self.method == "alpha":
-            cal = getattr(geo, "calib", None)
-            if cal is not None and tuple(cal[0]) == tuple(self.box):
-                self.a = np.clip(cal[1], 0, 0.92).astype(np.float32)
-            else:
-                self.a = E.alpha_for(geo, bx, by, bw, bh).astype(np.float32)
-            self.ac = np.clip(_chroma_alpha(self.a, geo.chroma_blur), 0, 0.95).astype(np.float32)
-            au = self.a / max(self.a.max(), 1e-6)
-            self.seam_w = np.clip(E.seam_mask(au) * seam, 0, 1).astype(np.float32)
-            self.seam_hard = (self.seam_w > 0.25).astype(np.uint8)
+            m = max(16, int(geo.size * 0.5))
+            x0, y0 = max(0, int(geo.x) - m), max(0, int(geo.y) - m)
+            x0, y0 = x0 - x0 % 2, y0 - y0 % 2
+            x1, y1 = min(W, int(geo.x + geo.size) + m + 1), min(H, int(geo.y + geo.size) + m + 1)
+            x1, y1 = x1 - (x1 - x0) % 2, y1 - (y1 - y0) % 2
+            self.rbox = (x0, y0, x1 - x0, y1 - y0)
+            self.local = (geo.x - x0, geo.y - y0, geo.size)
+            # strength Gemini uses on this placement (frames are kept close to it)
+            k0 = D.NOMINAL_K.get(D.prior_ratio(geo.x, geo.y, geo.size, W, H))
+            self.k0 = float(k0 if k0 is not None else np.clip(geo.strength, 0.3, 1.3))
+            T = E.render_alpha(E.Templates.get().variants["v1"], geo.x, geo.y, geo.size, *self.rbox)
+            self.mask = cv2.dilate((T > 0.002).astype(np.uint8), np.ones((7, 7), np.uint8)) > 0
+            self.mask_c = cv2.resize(self.mask.astype(np.uint8), (self.rbox[2] // 2, self.rbox[3] // 2),
+                                     interpolation=cv2.INTER_AREA) > 0
         else:
             T = E.Templates.get().variants["v1"]
             a = E.render_alpha(T, geo.x, geo.y, geo.size, bx, by, bw, bh)
@@ -356,11 +398,32 @@ class FrameRemover:
                                       interpolation=cv2.INTER_AREA) > 0).astype(np.uint8)
             self.rad = max(3, int(geo.size * 0.12))
 
-    def __call__(self, y: np.ndarray, u: np.ndarray, v: np.ndarray, scale: float = 1.0):
+    def patch_rgb(self, y, u, v) -> np.ndarray:
+        x0, y0, w, h = self.rbox
+        return yuv_to_rgb(y[y0:y0 + h, x0:x0 + w], u[y0 // 2:(y0 + h) // 2, x0 // 2:(x0 + w) // 2],
+                          v[y0 // 2:(y0 + h) // 2, x0 // 2:(x0 + w) // 2], self.full)
+
+    def strength(self, rgb: np.ndarray):
+        """Logo strength on one frame (outline vote on the RGB patch) and its trust."""
+        from . import detect as D
+        lx, ly, s = self.local
+        v = D.vote_at(D.planes_of(rgb), lx, ly, s, rgb.shape[1], rgb.shape[0])
+        return (float(v.k), float(v.inlier)) if v.n >= 60 else (float("nan"), 0.0)
+
+    def clamp(self, k: float) -> float:
+        """0 when the frame carries no logo (covered by an overlay), otherwise
+        the measured strength kept within 15 % of the nominal one."""
+        if not np.isfinite(k):
+            return self.k0
+        if k < 0.4 * self.k0:
+            return 0.0
+        return float(np.clip(k, 0.85 * self.k0, 1.15 * self.k0))
+
+    def __call__(self, y: np.ndarray, u: np.ndarray, v: np.ndarray, k: float | None = None):
         bx, by, bw, bh = self.box
         cx, cy = bx // 2, by // 2
-        ys = y[by:by + bh, bx:bx + bw]
         if self.method == "inpaint":
+            ys = y[by:by + bh, bx:bx + bw]
             y[by:by + bh, bx:bx + bw] = cv2.inpaint(np.ascontiguousarray(ys), self.mask,
                                                     self.rad, cv2.INPAINT_TELEA)
             for c in (u, v):
@@ -369,50 +432,47 @@ class FrameRemover:
                 c[cy:cy + cs.shape[0], cx:cx + cs.shape[1]] = cv2.inpaint(
                     np.ascontiguousarray(cs), m, max(2, self.rad // 2), cv2.INPAINT_TELEA)
             return
-        a = self.a if scale == 1.0 else np.clip(self.a * scale, 0, 0.92)
-        r = (ys.astype(np.float32) - a * self.white_y) / (1 - a)
-        if self.seam > 0 and self.seam_hard.any():
-            src = np.clip(r, 0, 255).astype(np.uint8)
-            inp = cv2.inpaint(src, self.seam_hard, 2, cv2.INPAINT_TELEA).astype(np.float32)
-            r = r * (1 - self.seam_w) + inp * self.seam_w
-        y[by:by + bh, bx:bx + bw] = np.clip(np.rint(r), 0, 255).astype(np.uint8)
-        ac = self.ac if scale == 1.0 else np.clip(self.ac * scale, 0, 0.95)
-        for c in (u, v):
-            cs = c[cy:cy + ac.shape[0], cx:cx + ac.shape[1]]
-            aa = ac[:cs.shape[0], :cs.shape[1]]
-            rc = (cs.astype(np.float32) - aa * 128.0) / (1 - aa)
-            c[cy:cy + cs.shape[0], cx:cx + cs.shape[1]] = np.clip(np.rint(rc), 0, 255).astype(np.uint8)
+        from . import restore as R
+        rgb = self.patch_rgb(y, u, v)
+        if k is None:                                    # single frame (preview): measure it here
+            kk, tr = self.strength(rgb)
+            k = self.clamp(kk) if tr >= 0.25 else self.k0
+        if k <= 0:
+            return                                       # no logo on this frame
+        lx, ly, s = self.local
+        g = E.Geometry(lx, ly, s, strength=float(k), variant="v1", sharp=float(self.geo.sharp or 0.0), found=True)
+        out = R.remove(rgb, g, self.seam).astype(np.float32)
+        Y2, U2, V2 = rgb_to_yuv(out, self.full)
+        x0, y0, w, h = self.rbox
+        ys = y[y0:y0 + h, x0:x0 + w]
+        ys[self.mask] = np.clip(np.rint(Y2[self.mask]), 0, 255).astype(np.uint8)
+        for c, P in ((u, U2), (v, V2)):
+            cs = c[y0 // 2:(y0 + h) // 2, x0 // 2:(x0 + w) // 2]
+            small = cv2.resize(P, (cs.shape[1], cs.shape[0]), interpolation=cv2.INTER_AREA)
+            cs[self.mask_c] = np.clip(np.rint(small[self.mask_c]), 0, 255).astype(np.uint8)
 
 
 def scene_scales(src: str, info: VideoInfo, remover: "FrameRemover", cancel=None,
                  progress=None, window_s: float = 0.5) -> np.ndarray | None:
-    """Per-frame correction of the logo strength, smoothed over time.
+    """Logo strength for every frame (v3.2); 0 = no logo on that frame.
 
-    The opacity measured on flat, dark surroundings can differ a little from
-    scene to scene (encoder / compositing).  For every frame the strength that
-    makes the logo interior match a smooth continuation of its surroundings
-    is measured; a trust-weighted running median over ~1 s keeps it stable
-    and frames without reliable evidence fall back to the global value."""
+    The strength is measured on each frame by outline voting and stabilised:
+    scene cuts are detected and values are never mixed across a cut; reliable
+    frames keep (a short median around) their own value, the others take the
+    trust-weighted median of their scene.  Frames where the logo is covered
+    (overlay, title card) measure ~0 and are left untouched."""
     if remover.method != "alpha":
         return None
-    W, H = _dims(info)
-    bx, by, bw, bh = remover.box
-    a0 = remover.a
-    au = a0 / max(float(a0.max()), 1e-6)
-    sup = cv2.dilate((au > 0.01).astype(np.uint8), np.ones((5, 5), np.uint8))
-    inner = cv2.erode((au > 0.6).astype(np.uint8), np.ones((3, 3), np.uint8)) > 0
-    if inner.sum() < 10:
-        return None
-    L = remover.white_y
+    x0, y0, bw, bh = remover.rbox
     total = info.frames
-    step = max(1, total // 900)          # long clips: measure a subset
+    step = max(1, total // 3000)         # very long clips: measure a subset
     proc = popen([ffmpeg_path(), "-v", "error", "-i", src, "-an", "-sn", "-dn",
                   "-fps_mode", "cfr", "-r", info.fps_str,
-                  "-vf", f"crop={bw}:{bh}:{bx}:{by}", "-f", "rawvideo", "-pix_fmt", "yuv420p", "-"],
+                  "-vf", f"crop={bw}:{bh}:{x0}:{y0}", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
                  stdout=__import__("subprocess").PIPE, stderr=__import__("subprocess").DEVNULL)
-    fbb = _frame_bytes(bw, bh)
-    cs, ts = [], []
-    n = 0
+    fbb = bw * bh * 3
+    cs, ts, seg = [], [], []
+    n, cur, prev = 0, 0, None
     try:
         while True:
             if cancel and cancel():
@@ -423,32 +483,18 @@ def scene_scales(src: str, info: VideoInfo, remover: "FrameRemover", cancel=None
             if n % step:
                 cs.append(np.nan)
                 ts.append(0.0)
+                seg.append(cur)
                 n += 1
                 continue
-            P = np.frombuffer(buf[:bw * bh], np.uint8).reshape(bh, bw).astype(np.float32)
-            rough = E.ring_roughness(P, au > 0.01)
-            tr = 1.0 / (1.0 + (rough / 2.0) ** 2)
-            c_est, ok = 1.0, False
-            if tr > 0.2:
-                B = E.harmonic_fill(P, sup, 150)
-                con = float(np.median((L - B)[inner]))
-                tr *= min(1.0, con / 60.0)
-                Pi, Bi, Ai = P[inner], B[inner], a0[inner]
-
-                def f(c):
-                    aa = np.clip(Ai * c, 0, 0.92)
-                    return float(np.median((Pi - aa * L) / (1 - aa) - Bi))
-                lo, hi = 0.6, 1.5
-                if con > 20 and f(lo) > 0 > f(hi):
-                    for _ in range(22):
-                        m = 0.5 * (lo + hi)
-                        if f(m) > 0:
-                            lo = m
-                        else:
-                            hi = m
-                    c_est, ok = 0.5 * (lo + hi), True
-            cs.append(c_est if ok else np.nan)
-            ts.append(tr if ok else 0.0)
+            P = np.frombuffer(buf, np.uint8).reshape(bh, bw, 3)
+            lum = P[..., 1].astype(np.float32)
+            if prev is not None and float(np.mean(np.abs(lum - prev))) > 14.0:
+                cur += 1                 # scene cut (or a very abrupt change)
+            prev = lum
+            c, tr = remover.strength(P)
+            cs.append(c)
+            ts.append(tr)
+            seg.append(cur)
             n += 1
             if progress and n % 25 == 0:
                 progress(min(0.15, 0.15 * n / max(total, 1)), "Đang đo độ mờ theo cảnh…")
@@ -458,20 +504,34 @@ def scene_scales(src: str, info: VideoInfo, remover: "FrameRemover", cancel=None
         proc.wait()
     if not cs:
         return None
-    cs, ts = np.array(cs), np.array(ts)
+    cs, ts, seg = np.array(cs), np.array(ts), np.array(seg)
     N = len(cs)
+
+    def wmed(c, w):
+        o = np.argsort(c)
+        cw = np.cumsum(w[o])
+        return float(c[o][np.searchsorted(cw, cw[-1] / 2)])
+
+    good = np.isfinite(cs) & (ts >= 0.25)
+    glob = wmed(cs[good], ts[good] ** 2) if good.sum() >= 3 else remover.k0
+    seg_val = {}
+    for sgn in np.unique(seg):
+        m = good & (seg == sgn)
+        seg_val[int(sgn)] = wmed(cs[m], ts[m] ** 2) if m.sum() >= 2 else None
     half = max(3, int(round(info.fps * window_s)))
-    out = np.ones(N, np.float32)
+    out = np.zeros(N, np.float32)
     for i in range(N):
-        lo, hi = max(0, i - half), min(N, i + half + 1)
-        w, c = ts[lo:hi], cs[lo:hi]
-        m = w > 0
-        if w[m].sum() < 0.8:
-            continue
-        o = np.argsort(c[m])
-        cw = np.cumsum(w[m][o])
-        out[i] = c[m][o][np.searchsorted(cw, cw[-1] / 2)]
-    return np.clip(out, 0.8, 1.3)
+        h = 2 if (good[i] and ts[i] >= 0.5) else half
+        lo, hi = max(0, i - h), min(N, i + h + 1)
+        m = good[lo:hi] & (seg[lo:hi] == seg[i])
+        if m.sum() >= 2:
+            k = wmed(cs[lo:hi][m], ts[lo:hi][m] ** 2)
+        elif seg_val[int(seg[i])] is not None:
+            k = seg_val[int(seg[i])]
+        else:
+            k = glob
+        out[i] = remover.clamp(k)
+    return out
 
 
 def preview_pair(path: str, t: float, geo: E.Geometry, info: VideoInfo | None = None,
@@ -483,7 +543,7 @@ def preview_pair(path: str, t: float, geo: E.Geometry, info: VideoInfo | None = 
     before = yuv_to_rgb(y, u, v, full)
     if geo is not None and geo.size > 0:
         H, W = y.shape
-        FrameRemover(geo, W, H, _white_y(info), method)(y, u, v)
+        FrameRemover(geo, W, H, _white_y(info), method, full_range=full)(y, u, v)
     after = yuv_to_rgb(y, u, v, full)
     return before, after
 
@@ -591,7 +651,8 @@ def process_video(src: str, dst: str, opts: E.Options | None = None, strip_metad
     method = "alpha" if geo.found and opts.method != "inpaint" else "inpaint"
     remover = None
     if geo.found or (opts.mode == "manual" and opts.manual_box):
-        remover = FrameRemover(geo, W, H, _white_y(info), method, opts.seam)
+        remover = FrameRemover(geo, W, H, _white_y(info), method, opts.seam,
+                               full_range=info.color_range == "pc")
     os.makedirs(os.path.dirname(os.path.abspath(dst)) or ".", exist_ok=True)
     ext = os.path.splitext(dst)[1].lower()
 
@@ -650,7 +711,7 @@ def process_video(src: str, dst: str, opts: E.Options | None = None, strip_metad
             arr = bytearray(buf)
             y, u, vv = _split_yuv(arr, W, H)
             y = y.copy(); u = u.copy(); vv = vv.copy()
-            sc = float(scales[min(n, len(scales) - 1)]) if scales is not None else 1.0
+            sc = float(scales[min(n, len(scales) - 1)]) if scales is not None else None
             remover(y, u, vv, sc)
             enc.stdin.write(y.tobytes())
             enc.stdin.write(u.tobytes())

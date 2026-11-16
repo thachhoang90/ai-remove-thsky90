@@ -8,7 +8,7 @@ import traceback
 from dataclasses import dataclass
 
 import numpy as np
-from PySide6.QtCore import (QObject, QPointF, QRectF, QSettings, Qt, QThread, QTimer, Signal,
+from PySide6.QtCore import (QCoreApplication, QObject, QPointF, QRectF, QSettings, Qt, QThread, QTimer, QUrl, Signal,
                             QUrl)
 from PySide6.QtGui import (QAction, QColor, QDesktopServices, QFont, QIcon, QImage, QPainter,
                            QPainterPath, QPalette, QPen, QPixmap)
@@ -245,18 +245,14 @@ class LogoDialog(QDialog):
             lay.addWidget(sl, r, 1)
             lay.addWidget(vl, r, 2)
             self.sliders[key] = sl
-        tip = QLabel("Logo được chèn sau khi gỡ logo Gemini. Bấm \"Xem thử\" để thấy kết quả trên ảnh đang chọn; "
-                     "khi bấm \"Bắt đầu xử lý ảnh\", logo được chèn vào mọi ảnh đã tích chọn.")
+        tip = QLabel("Logo hiện ngay trên khung xem trước mỗi khi bạn đổi vị trí, độ đậm, kích thước hay cách mép. "
+                     "Khi bấm \"Bắt đầu xử lý ảnh\", logo được chèn vào mọi ảnh đã tích chọn (sau khi gỡ logo Gemini).")
         tip.setObjectName("Hint")
         tip.setWordWrap(True)
         lay.addWidget(tip, 6, 0, 1, 3)
         row = QHBoxLayout()
-        bp = QPushButton("Xem thử trên ảnh đang chọn")
-        bp.setObjectName("Secondary")
-        bp.clicked.connect(self.tab.make_after)
         bc = QPushButton("Đóng")
         bc.clicked.connect(self.accept)
-        row.addWidget(bp)
         row.addStretch(1)
         row.addWidget(bc)
         lay.addLayout(row, 7, 0, 1, 3)
@@ -1142,11 +1138,27 @@ class MediaTab(QWidget):
         return (self.wm["logo"], self.wm["st"]) if self.wm["enabled"] and self.wm["logo"] is not None else None
 
     def wm_changed(self):
+        """v3.2: mọi thay đổi trong hộp thoại "Chèn logo" hiện NGAY trên khung xem
+        trước, không cần bấm nút.  Kết quả gỡ logo Gemini của ảnh đang chọn được
+        giữ lại, nên chỉ phải vẽ lại lớp logo riêng (tức thì khi kéo thanh trượt)."""
         if hasattr(self, "btn_logo"):
             self.btn_logo.setText("Chèn logo: đang bật" if self.wm_active() else "Chèn logo…")
-        self._invalidate_after()
+        base = getattr(self, "_after_base", None)
+        if base is not None and base[0] is self.current:
+            self._show_after(base[1])
+        elif self.current is not None and self.canvas.before is not None and self.btn_prev.isEnabled():
+            self.make_after()                       # chưa có kết quả: tạo một lần, lần sau tức thì
+
+    def _show_after(self, out):
+        wm = self.wm_active() if self.kind == "image" else None
+        img = EO.compose_watermark(out, wm[0], wm[1]) if wm else out
+        self.canvas.set_after(np_to_qimage(img))
+        self.btn_after.setChecked(True)
+        self.canvas.show_after = True
+        self.canvas.update()
 
     def _invalidate_after(self):
+        self._after_base = None
         self.canvas.set_after(None)
         if self.btn_after.isChecked():
             self.btn_before.setChecked(True)
@@ -1189,12 +1201,9 @@ class MediaTab(QWidget):
         if self.kind == "image":
             geo_cached = it.geo if (opts.mode == "auto" and opts.method == "alpha") else None
 
-            def job(path=it.path, opts=opts, g=geo_cached, wm=self.wm_active()):
+            def job(path=it.path, opts=opts, g=geo_cached):
                 rgb = IF.load(path).rgb
-                out, g2 = (batch.apply_geometry(rgb, g, opts), g) if g is not None else E.process_image(rgb, opts)
-                if wm:
-                    out = EO.compose_watermark(out, wm[0], wm[1])
-                return out, g2
+                return (batch.apply_geometry(rgb, g, opts), g) if g is not None else E.process_image(rgb, opts)
         else:
             t = self.preview_t
             geo_cached = it.geo if (opts.mode == "auto") else None
@@ -1217,10 +1226,9 @@ class MediaTab(QWidget):
             if it is not self.current:
                 return
             out, g = r
-            self.canvas.set_after(np_to_qimage(out))
-            self.btn_after.setChecked(True)
-            self.canvas.show_after = True
-            self.canvas.update()
+            if self.kind == "image":
+                self._after_base = (it, out)         # kết quả chưa chèn logo riêng (v3.2)
+            self._show_after(out)
 
         def fail(msg):
             self.btn_prev.setEnabled(True)
@@ -1261,6 +1269,102 @@ class MediaTab(QWidget):
             out.append((i, {"path": it.path, "base": it.base, "manual_box": mb, "template": it.template if mb else None,
                             "geo": it.geo if it.geo is not None and it.geo.found else None}))
         return out
+
+
+# ==========================================================================
+# v3.2 - tab mở một trang web công cụ ngay trong cửa sổ phần mềm
+# ==========================================================================
+
+class WebTab(QWidget):
+    """Trình duyệt nhúng (QtWebEngine = nhân Chromium) mở sẵn một trang web.
+
+    Trình duyệt chỉ được tạo khi người dùng mở tab lần đầu, nên không làm chậm
+    lúc khởi động.  Tệp tải về được hỏi nơi lưu; nếu máy không khởi tạo được
+    trình duyệt nhúng thì vẫn mở được trang bằng trình duyệt mặc định."""
+
+    def __init__(self, url: str, main: "MainWindow"):
+        super().__init__()
+        self.url, self.main, self.view = url, main, None
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(12, 10, 12, 10)
+        bar = QHBoxLayout()
+        self.b_back = QPushButton("← Quay lại")
+        self.b_reload = QPushButton("Tải lại trang")
+        self.b_home = QPushButton("Về trang đầu")
+        b_ext = QPushButton("Mở bằng trình duyệt ngoài")
+        b_ext.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(self.url)))
+        self.lbl = QLabel(url)
+        self.lbl.setObjectName("Hint")
+        for b in (self.b_back, self.b_reload, self.b_home, b_ext):
+            bar.addWidget(b)
+        bar.addWidget(self.lbl, 1)
+        lay.addLayout(bar)
+        self.holder = QVBoxLayout()
+        self.info = QLabel("Đang mở trang…")
+        self.info.setAlignment(Qt.AlignCenter)
+        self.info.setWordWrap(True)
+        self.holder.addWidget(self.info, 1)
+        self.b_retry = QPushButton("Thử lại trình duyệt trong phần mềm")
+        self.b_retry.clicked.connect(lambda: self.activate(force=True))
+        self.b_retry.hide()
+        self.holder.addWidget(self.b_retry, 0, Qt.AlignHCenter)
+        lay.addLayout(self.holder, 1)
+        self._tried = False
+
+    def activate(self, force: bool = False):
+        if self._tried and not force:
+            return
+        self._tried = True
+        st = self.main.settings
+        # Tự bảo vệ: nếu lần trước trình duyệt nhúng làm phần mềm thoát đột ngột trên
+        # máy này thì không tự mở lại nữa (cờ được xóa khi trình duyệt khởi tạo xong).
+        if st.value("web_embed_failed", False, type=bool) and not force:
+            for b in (self.b_back, self.b_reload, self.b_home):
+                b.setEnabled(False)
+            self.info.setText("Lần trước trình duyệt bên trong phần mềm không khởi động được trên máy này.\n"
+                              f"Bấm \"Mở bằng trình duyệt ngoài\" để dùng trang:\n{self.url}")
+            self.b_retry.show()
+            return
+        st.setValue("web_embed_failed", True)
+        st.sync()
+        try:
+            from PySide6.QtWebEngineWidgets import QWebEngineView
+
+            class _View(QWebEngineView):
+                def createWindow(self, _type):      # liên kết mở cửa sổ mới -> mở ngay trong tab
+                    return self
+
+            v = _View(self)
+            v.page().profile().downloadRequested.connect(self._download)
+            v.urlChanged.connect(lambda u: self.lbl.setText(u.toString()))
+            self.b_back.clicked.connect(v.back)
+            self.b_reload.clicked.connect(v.reload)
+            self.b_home.clicked.connect(lambda: v.setUrl(QUrl(self.url)))
+            self.info.hide()
+            self.b_retry.hide()
+            for b in (self.b_back, self.b_reload, self.b_home):
+                b.setEnabled(True)
+            self.holder.addWidget(v, 1)
+            v.setUrl(QUrl(self.url))
+            self.view = v
+            QTimer.singleShot(5000, lambda: (st.setValue("web_embed_failed", False), st.sync()))
+        except Exception as ex:  # noqa: BLE001
+            st.setValue("web_embed_failed", False)      # lỗi bắt được, không phải thoát đột ngột
+            for b in (self.b_back, self.b_reload, self.b_home):
+                b.setEnabled(False)
+            self.info.setText("Không khởi tạo được trình duyệt bên trong phần mềm trên máy này "
+                              f"({type(ex).__name__}: {ex}).\nBấm \"Mở bằng trình duyệt ngoài\" để dùng trang:\n{self.url}")
+
+    def _download(self, item):
+        folder = self.main.ed_out.text().strip() or os.path.join(os.path.expanduser("~"), "Downloads")
+        path, _ = QFileDialog.getSaveFileName(self, "Lưu tệp tải về", os.path.join(folder, item.downloadFileName()))
+        if not path:
+            item.cancel()
+            return
+        item.setDownloadDirectory(os.path.dirname(path))
+        item.setDownloadFileName(os.path.basename(path))
+        item.accept()
+        item.isFinishedChanged.connect(lambda p=path: self.main.show_status(f"Đã tải xong: {p}"))
 
 
 # ==========================================================================
@@ -1316,6 +1420,11 @@ class MainWindow(QMainWindow):
         from .editor.tab import EditorTab
         self.tab_edit = EditorTab(self)
         self.tabs.addTab(self.tab_edit, "  Chỉnh sửa ảnh  ")
+        # v3.2: hai tab mở trang web công cụ ngay trong cửa sổ phần mềm
+        self.tab_compress = WebTab("https://imagecompressor.com/vi/", self)
+        self.tabs.addTab(self.tab_compress, "  Nén ảnh hàng loạt  ")
+        self.tab_bgremove = WebTab("https://www.photoroom.com/tools/background-remover", self)
+        self.tabs.addTab(self.tab_bgremove, "  Xóa nền background ảnh  ")
         self.tabs.currentChanged.connect(self._on_tab)
         for t in (self.tab_img, self.tab_vid):
             t.status.connect(self.show_status)
@@ -1406,7 +1515,10 @@ class MainWindow(QMainWindow):
 
     def _on_tab(self, i):
         # Tab "Chỉnh sửa ảnh" có nút xuất riêng -> ẩn thanh xử lý hàng loạt bên dưới.
-        self.bottom.setVisible(self.tabs.widget(i) is not getattr(self, "tab_edit", None))
+        w = self.tabs.widget(i)
+        self.bottom.setVisible(isinstance(w, MediaTab))
+        if isinstance(w, WebTab):
+            w.activate()
         self.refresh_start_label()
 
     def refresh_start_label(self):
@@ -1661,6 +1773,8 @@ def main():
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("thsky90.AIRemove")
         except Exception:
             pass
+    # trình duyệt nhúng (QtWebEngine) cần thuộc tính này trước khi tạo QApplication
+    QCoreApplication.setAttribute(Qt.AA_ShareOpenGLContexts)
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
     app.setStyle("Fusion")

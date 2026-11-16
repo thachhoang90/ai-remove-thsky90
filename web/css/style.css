@@ -237,3 +237,8 @@ body.editing .main, body.editing .bar { display: none !important; }
 #logoBtn.on { background: #ECFDF5; color: #047857; border-color: #A7F3D0; }
 .btn.manall { background: #D97706; color: #fff; border-color: #D97706; }
 .btn.manall:hover:not(:disabled) { background: #B45309; }
+
+/* v3.2: hai liên kết công cụ ngoài (mở thẻ mới) cạnh các tab */
+.tablink { display: inline-block; padding: 10px 18px; margin-left: 6px; border: 1px solid #C7D2FE; border-bottom: none; border-radius: 10px 10px 0 0;
+  background: #fff; color: #4F46E5; font-weight: 700; font-size: 15px; text-decoration: none; }
+.tablink:hover { background: #EEF2FF; }

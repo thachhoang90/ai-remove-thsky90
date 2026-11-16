@@ -38,11 +38,11 @@ const view = {
   scale: 1, ox: 0, oy: 0, fitted: true, drag: null,
   setImage(img, keep = false) {
     const same = this.before && img && this.before.width === img.width && this.before.height === img.height;
-    this.before = img ? toBitmapCanvas(img) : null; this.after = null;
+    this.before = img ? toBitmapCanvas(img) : null; this.after = null; this.afterBase = null;
     $('empty').style.display = img ? 'none' : 'grid';
     if (!(keep && same)) this.fit(); else this.draw();
   },
-  setAfter(img) { this.after = img ? toBitmapCanvas(img) : null; this.draw(); },
+  setAfter(img) { this.after = img ? toBitmapCanvas(img) : null; if (!img) this.afterBase = null; this.draw(); },
   size() { const r = this.cv.getBoundingClientRect(); return [r.width, r.height]; },
   fit() {
     this.fitted = true;
@@ -361,7 +361,7 @@ async function makePreview() {
     let out;
     if (it.kind === 'image') {
       out = (o.mode === 'auto' && o.method === 'alpha' && it.geo) ? runImageWithGeo(it.preview, it.geo) : L.processImage(it.preview, o).img;
-      out = withLogo(out);
+      view.afterBase = out; view.afterItem = it; out = withLogo(out);   // v3.2: giữ kết quả chưa chèn logo để vẽ lại tức thì
     } else {
       const geo = await videoGeo(it, o);
       const tt = Math.min(it.info.duration * ($('seek').value / 1000), Math.max(0, it.info.duration - 0.1));
@@ -448,7 +448,10 @@ function wmChanged() {
   wm.st = { position: $('wmPos').value, opacity: +$('wmOpacity').value, scale: +$('wmScale').value, margin: +$('wmMargin').value };
   for (const k of ['Opacity', 'Scale', 'Margin']) $('wm' + k + 'V').textContent = $('wm' + k).value + '%';
   $('logoBtn').textContent = wm.on ? 'Chèn logo: đang bật' : 'Chèn logo…'; $('logoBtn').classList.toggle('on', wm.on);
-  if (view.after) { view.setAfter(null); setView('before'); }
+  // v3.2: logo hiện ngay trên khung xem trước khi đổi vị trí / độ đậm / kích thước
+  const it = tab().items[tab().cur], base = view.afterBase;
+  if (base && view.afterItem === it) { view.setAfter(withLogo(base)); view.afterBase = base; setView('after'); }
+  else if (it && it.kind === 'image' && it.preview && !$('preview').disabled) makePreview();
 }
 for (const [key, [label]] of Object.entries(O.POSITIONS)) { const o = document.createElement('option'); o.value = key; o.textContent = label; $('wmPos').appendChild(o); }
 $('wmPos').value = 'br';
